@@ -1,5 +1,5 @@
 {
-  "name": "unbash-walker",
+  "name": "@cad0p/unbash-walker",
   "version": "0.1.0",
   "private": false,
   "description": "Utility for walking unbash ASTs \u2014 extract commands, expand wrappers, resolve effective cwd.",
@@ -41,5 +41,8 @@
     "typescript": "^5.4.5",
     "@biomejs/biome": "^2.3.14",
     "@types/node": "^20.19.39"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

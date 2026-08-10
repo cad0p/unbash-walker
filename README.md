@@ -1,16 +1,16 @@
-# unbash-walker
+# @cad0p/unbash-walker
 
 Utility for walking [unbash](https://github.com/webpro-nl/unbash) ASTs — command extraction, wrapper expansion, and an extensible per-command state tracker (cwd, branch, and more).
 
 ## Install
 
 ```sh
-pnpm add unbash-walker unbash
+pnpm add @cad0p/unbash-walker unbash
 # or
-npm install unbash-walker unbash
+npm install @cad0p/unbash-walker unbash
 ```
 
-`unbash` is a peer concern: you'll need it to produce the `Script` that `unbash-walker` consumes. `unbash-walker` also re-exports `parse` and the core types for convenience.
+`unbash` is a peer concern: you'll need it to produce the `Script` that `@cad0p/unbash-walker` consumes. `@cad0p/unbash-walker` also re-exports `parse` and the core types for convenience.
 
 ## Quick look
 
@@ -23,7 +23,7 @@ import {
   cwdTracker,
   getBasename,
   getCommandArgs,
-} from "unbash-walker";
+} from "@cad0p/unbash-walker";
 
 const raw = "cd /home/me/repo && sudo sh -c 'git push --force'";
 const script = parse(raw);
@@ -84,7 +84,7 @@ Static analysis; some bash constructs are deliberately under- or over-approximat
 
 ## Acknowledgments
 
-Built on top of [`unbash`](https://github.com/webpro-nl/unbash) by [Lars Kappert](https://github.com/webpro) (also maintainer of [knip](https://github.com/webpro-nl/knip)). `unbash-walker` is strictly a consumer — `unbash` handles every piece of parsing.
+Built on top of [`unbash`](https://github.com/webpro-nl/unbash) by [Lars Kappert](https://github.com/webpro) (also maintainer of [knip](https://github.com/webpro-nl/knip)). `@cad0p/unbash-walker` is strictly a consumer — `unbash` handles every piece of parsing.
 
 The command-extraction and wrapper-expansion logic was originally authored by [Jason Diamond](https://github.com/jdiamond) as part of [pi-guard](https://github.com/jdiamond/pi-guard). This package is a refactor-and-extraction of that work with the addition of a `walk` tracker API, a built-in `cwdTracker`, and a `getBasename` helper. Both the original files and the additions are MIT-licensed. File headers carry dual credit.
 
