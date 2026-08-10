@@ -61,7 +61,7 @@ for (const cmd of commands) {
 ## What this is not
 
 - **Not a parser.** `unbash` handles parsing; this package operates on its output.
-- **Not a pi extension, hook, or rule engine.** It's general-purpose AST infrastructure. Guardrail and permission packages (pi-guard, samfoy/pi-steering-hooks, cad0p/pi-steering-hooks) build their logic on top of it.
+- **Not a pi extension, hook, or rule engine.** It's general-purpose AST infrastructure. Guardrail and permission packages (pi-guard, samfoy/pi-steering-hooks, [cad0p/pi-steering](https://github.com/cad0p/pi-steering)) build their logic on top of it.
 - **Not a shell.** It doesn't execute commands or model every bash semantic. It models enough structure to power guardrails and auditing tools. `pushd`/`popd`, `eval`, `source`, and `git --git-dir=/path` are out of scope today; see `src/trackers/cwd.ts` for the current coverage list.
 
 ## `cwdTracker` — known limitations
@@ -90,10 +90,10 @@ The command-extraction and wrapper-expansion logic was originally authored by [J
 
 ## Status
 
-PoC phase. The package is `private: true` inside the [`pi-steering-hooks` monorepo](../../README.md) until two things line up:
+PoC phase. Since the 2026-08-10 monorepo split this is a standalone repo/package (`private: true`, `0.0.0-poc.0`, publish deferred). The first publish waits on two things:
 
 1. The end-to-end PoC (the `pi-steering` steering engine consuming this package) demonstrates the value.
-2. The extraction proposal on [jdiamond/pi-guard](https://github.com/jdiamond/pi-guard) has been resolved — either `unbash-walker` is adopted upstream and moves to its own repo, or we publish it under the `cad0p` scope.
+2. The extraction proposal on [jdiamond/pi-guard](https://github.com/jdiamond/pi-guard) has been resolved — either `unbash-walker` is adopted upstream, or we publish it under the `cad0p` scope ourselves (publish runbook: [cad0p/pi-steering PUBLISHING.md](https://github.com/cad0p/pi-steering/blob/main/PUBLISHING.md)).
 
 ## License
 
