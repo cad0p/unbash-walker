@@ -1,12 +1,12 @@
 # Changelog
 
-All notable changes to `unbash-walker` are documented in this file.
+All notable changes to `@cad0p/unbash-walker` are documented in this file.
 
 ## [0.1.0] — 2026-08-10
 
 ### Added
 
-- First public npm release (`unbash-walker@0.1.0`), published from the standalone repo (post-monorepo-split).
+- First public npm release (`@cad0p/unbash-walker@0.1.0`), published from the standalone repo (post-monorepo-split).
 
 ## [Unreleased]
 
