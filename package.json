@@ -1,8 +1,8 @@
 {
   "name": "unbash-walker",
-  "version": "0.0.0-poc.0",
-  "private": true,
-  "description": "Utility for walking unbash ASTs — extract commands, expand wrappers, resolve effective cwd.",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Utility for walking unbash ASTs \u2014 extract commands, expand wrappers, resolve effective cwd.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cad0p/unbash-walker.git"
@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
