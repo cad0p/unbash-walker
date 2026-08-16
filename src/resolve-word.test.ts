@@ -461,14 +461,14 @@ describe("resolveWordText", () => {
       );
     });
 
-    it("top-level unquoted \${X} resolves (value-mode parity)", () => {
-      const w = wordFromCdArg("\${X}");
+    it("top-level unquoted ${X} resolves (value-mode parity)", () => {
+      const w = wordFromCdArg("${X}");
       assert.equal(resolveWordText(w, new Map([["X", "/x"]])), "/x");
       assert.equal(resolveWord(w, new Map([["X", "/x"]])), "/x");
     });
 
-    it("top-level unquoted \${X:-d} (modifier) → undefined", () => {
-      const w = wordFromCdArg("\${X:-d}");
+    it("top-level unquoted ${X:-d} (modifier) → undefined", () => {
+      const w = wordFromCdArg("${X:-d}");
       assert.equal(resolveWordText(w, new Map([["X", "/x"]])), undefined);
     });
 
