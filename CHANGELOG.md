@@ -1,6 +1,17 @@
 # Changelog
 
-All notable changes to `@cad0p/unbash-walker` are documented in this file.
+All notable changes to this project will be documented in this file.
+
+## [calver-released]
+
+<!-- USER-EDITABLE SECTION START -->
+<!-- Add your curated release notes here. -->
+<!-- USER-EDITABLE SECTION END -->
+
+### 🚀 Features
+
+- ResolveWordText — text-mode word resolution with process-substitution inner expansion (closes #5)
+
 
 ## [0.1.0] — 2026-08-10
 
