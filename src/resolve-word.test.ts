@@ -12,7 +12,7 @@ import { describe, it } from "node:test";
 import type { Word } from "unbash";
 import { parse as parseBash } from "unbash";
 import { extractAllCommandsFromAST } from "./extract.ts";
-import { resolveWord } from "./resolve-word.ts";
+import { resolveWord, resolveWordText } from "./resolve-word.ts";
 
 /**
  * Parse `cd X` and pluck the `X` word — the simplest reliable
@@ -276,6 +276,169 @@ describe("resolveWord", () => {
     it("one undefined part makes the whole word intractable", () => {
       const w = wordFromCdArg("$A$B");
       assert.equal(resolveWord(w, new Map([["A", "one"]])), undefined);
+    });
+  });
+});
+
+describe("resolveWordText", () => {
+  const BODY_ENV = new Map([["BODY", "/vault/repo/prs/note.md"]]);
+  const EXPECTED_PERL = `<(perl -0777 -pe '<BODY_STRIP>' "/vault/repo/prs/note.md")`;
+
+  describe("process substitution — acceptance case", () => {
+    it("expands $BODY inside <(…), keeping inner quoting", () => {
+      // The guardrail acceptance case: predicates need the TEXT of a
+      // process-substitution word with variables inside it expanded.
+      const w = wordFromCdArg(`<(perl -0777 -pe '<BODY_STRIP>' "$BODY")`);
+      assert.equal(resolveWordText(w, BODY_ENV), EXPECTED_PERL);
+    });
+
+    it("expands ${BODY} form identically", () => {
+      const w = wordFromCdArg(`<(perl -0777 -pe '<BODY_STRIP>' "\${BODY}")`);
+      assert.equal(resolveWordText(w, BODY_ENV), EXPECTED_PERL);
+    });
+
+    it("inner $VAR absent from env → whole word undefined", () => {
+      const w = wordFromCdArg(`<(perl -0777 -pe '<BODY_STRIP>' "$BODY")`);
+      assert.equal(resolveWordText(w, new Map()), undefined);
+    });
+
+    it("acceptance-shaped end-to-end: gh pr create --body-file=<(…)", () => {
+      // `--body-file=` and the process substitution parse as separate
+      // suffix words; the PS word must resolve to the expanded text.
+      const raw = `gh pr create --body-file=<(perl -0777 -pe '<BODY_STRIP>' "$BODY")`;
+      const script = parseBash(raw);
+      const refs = extractAllCommandsFromAST(script, raw);
+      const gh = refs.find((r) => r.node.name?.text === "gh");
+      assert.ok(gh, "gh command extracted");
+      const word = gh.node.suffix.find((w) => w.text.startsWith("<("));
+      assert.ok(word, "process-substitution suffix word found");
+      assert.equal(resolveWordText(word, BODY_ENV), EXPECTED_PERL);
+    });
+  });
+
+  describe("process substitution — variants", () => {
+    it(">( … ) operator", () => {
+      const w = wordFromCdArg(`>(cat "$BODY")`);
+      assert.equal(
+        resolveWordText(w, BODY_ENV),
+        `>(cat "/vault/repo/prs/note.md")`,
+      );
+    });
+
+    it("nested process substitution recurses", () => {
+      const w = wordFromCdArg(`<(cat <(echo "$BODY"))`);
+      assert.equal(
+        resolveWordText(w, BODY_ENV),
+        `<(cat <(echo "/vault/repo/prs/note.md"))`,
+      );
+    });
+
+    it("spaces inside inner double-quoted words survive (quotes kept)", () => {
+      const w = wordFromCdArg(`<(echo "a b" c)`);
+      assert.equal(resolveWordText(w, new Map()), `<(echo "a b" c)`);
+    });
+
+    it("inner bare ~/… expands via HOME", () => {
+      const w = wordFromCdArg(`<(echo ~/x)`);
+      assert.equal(
+        resolveWordText(w, new Map([["HOME", "/home/me"]])),
+        `<(echo /home/me/x)`,
+      );
+    });
+
+    it("command substitution in an inner word → undefined", () => {
+      const w = wordFromCdArg(`<(echo "$BODY" "$(pwd)")`);
+      assert.equal(resolveWordText(w, BODY_ENV), undefined);
+    });
+
+    it("pipeline inner script (2+ top-level commands) → undefined", () => {
+      const w = wordFromCdArg(`<(cmd1 | cmd2)`);
+      assert.equal(resolveWordText(w, new Map()), undefined);
+    });
+
+    it("`;`-separated inner script (2+ top-level commands) → undefined", () => {
+      const w = wordFromCdArg(`<(a; b)`);
+      assert.equal(resolveWordText(w, new Map()), undefined);
+    });
+
+    it("inner name that doesn't resolve → undefined", () => {
+      const w = wordFromCdArg(`<($CMD x)`);
+      assert.equal(resolveWordText(w, new Map()), undefined);
+    });
+  });
+
+  describe("plain words — quote-preserving parity with resolveWord", () => {
+    it(`"$BODY" keeps its quotes`, () => {
+      const w = wordFromCdArg(`"$BODY"`);
+      assert.equal(resolveWordText(w, BODY_ENV), `"/vault/repo/prs/note.md"`);
+      // value-mode parity: same string, quotes stripped
+      assert.equal(resolveWord(w, BODY_ENV), "/vault/repo/prs/note.md");
+    });
+
+    it(`"feat: x" keeps its quotes (spaces survive tokenizers)`, () => {
+      const w = wordFromCdArg(`"feat: x"`);
+      assert.equal(resolveWordText(w, new Map()), `"feat: x"`);
+    });
+
+    it("bare $BODY resolves unquoted", () => {
+      const w = wordFromCdArg("$BODY");
+      assert.equal(resolveWordText(w, BODY_ENV), "/vault/repo/prs/note.md");
+      assert.equal(resolveWord(w, BODY_ENV), "/vault/repo/prs/note.md");
+    });
+
+    it("static literals unchanged (parity)", () => {
+      const w = wordFromCdArg("/tmp/pkg");
+      assert.equal(resolveWordText(w, new Map()), "/tmp/pkg");
+      assert.equal(resolveWord(w, new Map()), "/tmp/pkg");
+    });
+
+    it("single-quoted text preserved verbatim (never expanded)", () => {
+      const w = wordFromCdArg("'literal-with-$VAR'");
+      assert.equal(
+        resolveWordText(w, new Map([["VAR", "expanded"]])),
+        "'literal-with-$VAR'",
+      );
+    });
+  });
+
+  describe("tilde expansion and fail-closed forms", () => {
+    it("~ / ~/subdir expand via HOME (first part, bare literal)", () => {
+      const home = new Map([["HOME", "/home/me"]]);
+      assert.equal(resolveWordText(wordFromCdArg("~"), home), "/home/me");
+      assert.equal(
+        resolveWordText(wordFromCdArg("~/proj/app"), home),
+        "/home/me/proj/app",
+      );
+    });
+
+    it("HOME missing → ~/… undefined (fail-closed)", () => {
+      assert.equal(
+        resolveWordText(wordFromCdArg("~/proj"), new Map()),
+        undefined,
+      );
+    });
+
+    it("quoted tilde is NOT expanded", () => {
+      const w = wordFromCdArg(`"~/proj"`);
+      assert.equal(
+        resolveWordText(w, new Map([["HOME", "/home/me"]])),
+        `"~/proj"`,
+      );
+    });
+
+    it("${X:-default} (modifier) → undefined", () => {
+      const w = wordFromCdArg(`"\${X:-d}"`);
+      assert.equal(resolveWordText(w, new Map([["X", "/x"]])), undefined);
+    });
+
+    it("command substitution in a plain word → undefined", () => {
+      const w = wordFromCdArg("$(pwd)");
+      assert.equal(resolveWordText(w, new Map()), undefined);
+    });
+
+    it("bare $UNDEFINED → undefined", () => {
+      const w = wordFromCdArg("$UNDEFINED");
+      assert.equal(resolveWordText(w, new Map()), undefined);
     });
   });
 });
