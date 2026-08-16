@@ -35,7 +35,7 @@ export {
   isBareAssignment,
 } from "./resolve.ts";
 
-export { resolveWord } from "./resolve-word.ts";
+export { resolveWord, resolveWordText } from "./resolve-word.ts";
 export {
   isStaticallyResolvable,
   type Modifier,
