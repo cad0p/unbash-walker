@@ -345,7 +345,13 @@ function resolveDoubleQuotedChild(
 ): string | undefined {
   switch (child.type) {
     case "Literal":
-      return child.value;
+      // Use `text` (raw source), NOT `value`: unbash's `value` for a
+      // double-quoted literal child is the UNESCAPED content, so
+      // `"a\"b"` would rebuild as `"a"b"` (mis-tokenized) and
+      // `"\$X"` would turn an escaped dollar into a live expansion.
+      // `text` keeps the escapes byte-identical, matching what the
+      // shell actually executes.
+      return child.text;
 
     case "SimpleExpansion": {
       const raw = child.text;
@@ -415,6 +421,13 @@ function resolveProcessSubstitutionText(
     return part.text;
   }
 
+  // NOTE: the rebuilt text covers the inner command's NAME + SUFFIX
+  // words only — inner redirects and assignment prefixes
+  // (`<(cmd >out)`, `<(FOO=bar cmd)`) are dropped from the rebuild
+  // (locked spec scope). The rebuilt text is therefore the expanded
+  // COMMAND-LINE form, not a byte-exact rewrite; consumers that need
+  // byte fidelity should treat unresolvable/redirect-bearing forms
+  // as out of scope.
   const refs = extractAllCommandsFromAST(script, part.text);
   const topLevel = refs.filter((ref) => ref.group === 0);
   if (topLevel.length !== 1) return undefined;

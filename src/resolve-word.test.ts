@@ -440,5 +440,72 @@ describe("resolveWordText", () => {
       const w = wordFromCdArg("$UNDEFINED");
       assert.equal(resolveWordText(w, new Map()), undefined);
     });
+
+    // Review-verified escapes: `value` (unescaped) vs `text` (raw) for
+    // double-quoted literal children. Regression tests for the fix.
+    it("escaped quote inside double quotes survives (raw source kept)", () => {
+      const w = wordFromCdArg(`"a\\"b"`);
+      assert.equal(resolveWordText(w, new Map()), `"a\\"b"`);
+    });
+
+    it("escaped dollar stays literal — no live expansion in rebuilt text", () => {
+      const w = wordFromCdArg(`"\\$X"`);
+      assert.equal(resolveWordText(w, new Map([["X", "LIVE"]])), `"\\$X"`);
+    });
+
+    it("mixed real expansion + escaped content inside double quotes", () => {
+      const w = wordFromCdArg(`"a $X \\" b"`);
+      assert.equal(
+        resolveWordText(w, new Map([["X", "LIVE"]])),
+        `"a LIVE \\" b"`,
+      );
+    });
+
+    it("top-level unquoted \${X} resolves (value-mode parity)", () => {
+      const w = wordFromCdArg("\${X}");
+      assert.equal(resolveWordText(w, new Map([["X", "/x"]])), "/x");
+      assert.equal(resolveWord(w, new Map([["X", "/x"]])), "/x");
+    });
+
+    it("top-level unquoted \${X:-d} (modifier) → undefined", () => {
+      const w = wordFromCdArg("\${X:-d}");
+      assert.equal(resolveWordText(w, new Map([["X", "/x"]])), undefined);
+    });
+
+    it("~user — unsupported, returns literal unchanged", () => {
+      const w = wordFromCdArg("~alice/docs");
+      assert.equal(
+        resolveWordText(w, new Map([["HOME", "/home/me"]])),
+        "~alice/docs",
+      );
+    });
+
+    it("special params $? / $$ → undefined (not identifier names)", () => {
+      const w1 = wordFromCdArg("$?");
+      assert.equal(resolveWordText(w1, new Map()), undefined);
+      const w2 = wordFromCdArg("$$");
+      assert.equal(resolveWordText(w2, new Map()), undefined);
+    });
+
+    it("process substitution with script === undefined keeps raw part text", () => {
+      // Hand-built word: the parser always yields a Script for valid
+      // input, so this arm is defensive — pin it with a synthetic part.
+      const w: Word = {
+        text: "<(echo hi)",
+        value: "<(echo hi)",
+        pos: 0,
+        end: 10,
+        parts: [
+          {
+            type: "ProcessSubstitution",
+            text: "<(echo hi)",
+            operator: "<",
+            script: undefined,
+            inner: undefined,
+          },
+        ],
+      };
+      assert.equal(resolveWordText(w, new Map()), "<(echo hi)");
+    });
   });
 });
