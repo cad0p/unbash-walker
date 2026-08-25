@@ -36,8 +36,9 @@
  *     which the walker surfaces as the `unknown` sentinel and the
  *     engine's `when.cwd` predicate consumes via its `onUnknown`
  *     policy (default `'block'`, fail-closed).
- *   - `git -C DIR` — per-command cwd override. Scans pre-subcommand flags
- *     only, stopping at the subcommand token. Composable:
+ *   - `git -C DIR` — per-command cwd override. Locates the subcommand via the
+ *     argv-structured scan (`locateSubcommandStart`, issue #8), walking only
+ *     pre-subcommand flags. Composable:
  *     `git -C /a -C b push` records at `/a/b`. Also skips `-c KEY=VAL`.
  *   - `make -C DIR` — per-command; scans all tokens (make parses flags
  *     interspersed with targets). Skips `-f`, `-I`, `-o`, `-W` which
@@ -58,6 +59,9 @@ import * as path from "node:path";
 import type { Word } from "unbash";
 import { seedProcessEnv } from "../internal/seed-process-env.ts";
 import { resolveWord } from "../resolve-word.ts";
+// Internal primitive (deliberately NOT re-exported from index root): the
+// git modifier consumes only its boundary index, not the public API.
+import { locateSubcommandStart } from "../subcommand.ts";
 import {
   isStaticallyResolvable,
   type Modifier,
@@ -259,27 +263,40 @@ function hasStaticTarget(w: Word | undefined): boolean {
 }
 
 /**
- * Resolve per-command cwd for `git`. Scans pre-subcommand flags for `-C DIR`,
- * composing left-to-right. Stops at the subcommand (first non-flag token),
- * so `git push -C /x` is NOT misread (here `-C` is a git-push arg, not a
- * git global flag).
+ * Resolve per-command cwd for `git`.
  *
- * Also skips `-c <key>=<value>` — a common git flag that consumes the next
- * whitespace-separated token as its value. Not doing so would let `-c`'s
- * value be misinterpreted as the subcommand and prematurely terminate the
- * scan.
+ * REBASED on `locateSubcommandStart` (issue #8): the subcommand boundary —
+ * where pre-subcommand global flags end and the subcommand begins — is now
+ * located by the shared argv-structured scan instead of a hand-rolled
+ * stop-at-first-non-flag condition. Git's position policy (`globals-before-only`)
+ * and its value-consuming flags (`-C DIR`, `-c <key>=<value>`) are passed
+ * explicitly: bare words carry no binary identity, so the primitive takes no
+ * defaults. The scan stops collecting at the first positional, so `git push
+ * -C /x` is NOT misread (there `-C` is a git-push arg, not a git global flag).
  *
- * Long flags (`--foo`, `--foo=value`, `--paginate`, `--no-pager`) are
- * single tokens. `--git-dir=/path` and `--work-tree=/path` are documented
- * as not modelled (follow-up).
+ * The walk below then collects `-C DIR` pairs over `[0, boundary)`, composing
+ * left-to-right (`git -C /a -C b push` records at `/a/b`). The early-return-on-
+ * malformed-target behavior is preserved verbatim: a missing or non-static
+ * target (`git -C`, `git -C $VAR`) means "no override" — return the best
+ * prefix computed so far rather than guessing.
+ *
+ * Boundary null (all-flag invocation, e.g. bare `git -C`) rebases to
+ * args.length so the malformed-target guard still sees the trailing pair.
+ *
+ * Long flags (`--foo`, `--foo=value`, `--paginate`, `--no-pager`) are single
+ * tokens. `--git-dir=/path` and `--work-tree=/path` are documented as not
+ * modelled (follow-up).
  */
 function applyGitCwd(args: readonly Word[], current: string): string {
+  const boundary =
+    locateSubcommandStart(args, {
+      positionPolicy: "globals-before-only",
+      valueConsumingFlags: ["-C", "-c"],
+    }) ?? args.length;
   let cwd = current;
   let i = 0;
-  while (i < args.length) {
+  while (i < boundary) {
     const tok = wordValue(args[i]) ?? "";
-    // Subcommand reached — stop scanning for pre-subcommand flags.
-    if (!tok.startsWith("-")) return cwd;
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
@@ -289,13 +306,12 @@ function applyGitCwd(args: readonly Word[], current: string): string {
       i += 2;
       continue;
     }
-    // `-c <key>=<value>` — consume both.
+    // `-c <key>=<value>` — consume both (boundary already jumped it; the walk
+    // must too). All other flags: single token, no effect on cwd we model.
     if (tok === "-c") {
       i += 2;
       continue;
     }
-    // All other flags (short cluster, long with or without attached value):
-    // single token, no effect on cwd we model.
     i++;
   }
   return cwd;
