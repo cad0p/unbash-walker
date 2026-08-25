@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 - ResolveWordText — text-mode word resolution with process-substitution inner expansion (closes #5)
+- GetSubcommandWords + bundleContains — argv-structured subcommand extraction (closes #8)
 
 
 ## [0.1.0] — 2026-08-10
