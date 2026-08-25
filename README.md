@@ -53,10 +53,60 @@ for (const cmd of commands) {
 | `envTracker` | const | Built-in tracker for shell env. Captures bare assignments (`FOO=bar`), `export NAME=value`, and `unset NAME` from the same chain, seeded from `process.env.{HOME, USER, PWD}` at module load. Subshell-isolated. Scope limits (readonly / local / declare / typeset / source / function-body) documented in `trackers/env.ts`. |
 | `EnvState` | type | `ReadonlyMap<string, string>` — the shape `envTracker` produces per ref. |
 | `resolveWord(word, env)` | fn | Statically resolve an unbash `Word` to its string value, expanding `$NAME` / `${NAME}` / `~` via the supplied env map. Returns `undefined` when any part is intractable (command substitution, arithmetic, parameter-expansion with modifiers, unknown var). Shared by `cdTracker`'s modifier and reusable by plugin predicates. |
+| `getSubcommandWords(ref, options?)` | fn | Extract the subcommand token run of a multi-command binary (`gh -R x/y pr merge` → `["pr"]`; depth=2 → `["pr","merge"]`). Linear argv-structured scan over `ref.node.suffix` — skips flag tokens and caller-declared value-consuming flags by position, so a flag value is never mistaken for the subcommand. Quote-aware (`value ?? text`). Returns up to `depth` positional words, or `null` when no positional remains. See "Subcommand extraction" below. |
+| `bundleContains(word, letter)` | fn | Does one short-option-shaped word contain `letter` in its bundle? `-uf` / f → true; `-f=x` / f → true (body cut at first `=`); `--force` → false. Over-match on glued values documented — see "Subcommand extraction" below. |
+| `DEFAULT_POSITION_POLICIES` | const | Per-binary default `positionPolicy` table (basename-keyed) consulted by `getSubcommandWords`; caller override wins. Survey-backed; see policy table below. |
+| `PositionPolicy` / `SubcommandOptions` | types | Policy enum (`globals-anywhere \| globals-before-only \| globals-after-only`) and the option bag (`positionPolicy?`, `depth?`, `valueConsumingFlags?`) for `getSubcommandWords`. |
 | `Tracker<T>` / `Modifier<T, TAll>` / `isStaticallyResolvable(word)` | types, fn | Author your own tracker dimensions — register modifiers keyed by command basename with `scope: "sequential" \| "per-command"`. Modifier.apply receives `(args, current, allState)` — `allState` is a read-only snapshot of every registered tracker's pre-ref state, enabling cross-tracker reads (e.g. `cwdTracker`'s `cd` modifier reads `allState.env`). Narrow the `TAll` type parameter to declare what you need. Return `undefined` from `apply` to signal "can't resolve statically"; the walker substitutes the tracker's `unknown` sentinel. |
 | `getCommandName` / `getCommandArgs` / `getBasename` / `isBareAssignment` | fn | Read the parts of a `CommandRef`. `getBasename` strips any leading path (`/usr/bin/git` → `git`). |
 | `formatCommand(cmd, options?)` | fn | Re-serialize a `CommandRef` as a single-line display string with length-aware shrinking and path-aware elision. |
 | `CommandRef` | type | `{ node: Command; source: string; group: number; joiner?: "\|" \| "&&" \| "\|\|" \| ";" }` |
+
+## Subcommand extraction
+
+Guardrails need to know *which subcommand* an invocation targets without re-deriving leading-flag grammar per rule (the "flag grammar tax": regex-based skip patterns die on bundled shorts, and flag values get mistaken for the subcommand — the exact bug class behind `git -c KEY=VAL push` misreads and `gh --hostname h pr merge` routing nowhere). `getSubcommandWords` answers structurally over the AST's word list:
+
+```ts
+import { getSubcommandWords } from "@cad0p/unbash-walker";
+
+// gh -R x/y pr merge  →  ["pr"]        (depth=1, default)
+//                     →  ["pr","merge"] (depth=2)
+const words = getSubcommandWords(ref, {
+  depth: 2,
+  valueConsumingFlags: ["-R"], // caller declares -R consumes its next token
+});
+```
+
+### Position policy — a per-binary property
+
+Position semantics differ across CLI families (cobra accepts globals anywhere; gitcli(7) fatals on after-subcommand globals; mitchellh/cli errors on pre-sub flags). They ship as overridable in-package defaults because they're tiny, stable, and survey-backed — unlike flag inventories, which are open-ended and version-volatile:
+
+| policy | binaries (defaults) |
+| --- | --- |
+| `globals-anywhere` | gh, kubectl, docker, aws, gcloud, az, npm, pnpm, yarn, cargo, uv, pip |
+| `globals-before-only` | git |
+| `globals-after-only` | terraform, go |
+
+Unknown binaries fall back to `globals-anywhere`. Only `globals-after-only` binaries reject leading-global-flag shapes (`go -v build` → `null`; such invocations are invalid by definition). For `globals-before-only` binaries, post-subcommand flags are simply subcommand-owned args — `git push -C x` still extracts `["push"]`.
+
+### `valueConsumingFlags` — caller-owned flag arity
+
+The walker owns the consumption *algorithm* but NOT the facts: there is deliberately **no in-package flag-arity inventory**. Which flags consume the following token (`git -C DIR`, `-c KEY=VAL`) is binary-specific, version-volatile knowledge that lives with whoever has grounding — usually you, at the call site. Exact-token match only (`--flag=value` attached forms are consumed automatically as single tokens).
+
+This contract is garbage-in/garbage-out, pinned honestly by tests: declare `-R` consuming and `gh -R pr merge` extracts `["merge"]` (the value never leaks); leave it undeclared and the same shape extracts `["pr"]`. Same for `gh --hostname h pr merge` — undeclared, `"h"` comes out as the "subcommand". If your declaration set is wrong, extraction follows it faithfully.
+
+### Honest limits (documented, pinned by tests)
+
+- **Null conflates two failure modes**: zero positionals (all-flag invocation like bare `git -C`) and after-only invalid shape (`go -v build`) both return `null` — for fail-closed consumers they mean the same thing: no extraction possible.
+- **`$VAR` values are not expanded** — the scan is structural only; `mytool $VAR sub` extracts `["$VAR"]` literally.
+- **Negative-number-looking tokens** (`-1`) classify as flag-shaped and are skipped.
+- **`--` is skipped but post-`--` positional semantics are not modeled** — future refinement.
+- **No alias identity**: `-R` vs `--repo` equivalence is caller policy; no alias knowledge ships in-package.
+- **No multi-word matching beyond `depth` positional tokens.**
+
+`bundleContains(word, letter)` expands short-flag bundles lexically and is honest about the limit: `-uf` (a bundle) and `-fx` (flag + glued value) are shape-identical without per-flag arity knowledge, so glued values over-match — `-fx` reports BOTH `f` and `x` as contained letters. Bodies cut at the first `=` (`-f=x` scans only `f`; anything post-`=` is a value). Long options (`--force`) never match.
+
+The built-in `cwdTracker`'s git modifier uses the same primitive internally (`locateSubcommandStart`), so the subcommand boundary has exactly one implementation.
 
 ## What this is not
 

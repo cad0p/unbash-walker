@@ -37,6 +37,13 @@ export {
 
 export { resolveWord, resolveWordText } from "./resolve-word.ts";
 export {
+  bundleContains,
+  DEFAULT_POSITION_POLICIES,
+  getSubcommandWords,
+  type PositionPolicy,
+  type SubcommandOptions,
+} from "./subcommand.ts";
+export {
   isStaticallyResolvable,
   type Modifier,
   type SubshellSemantics,
