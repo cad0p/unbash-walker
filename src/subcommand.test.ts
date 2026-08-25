@@ -188,10 +188,10 @@ describe("getSubcommandWords", () => {
     });
 
     it('quoted "pr" positional extracts via .value (quote-awareness symmetric)', () => {
-      assert.deepEqual(texts(getSubcommandWords(refOf('gh "pr" merge'))), [
-        "pr",
-        "merge",
-      ]);
+      assert.deepEqual(
+        texts(getSubcommandWords(refOf('gh "pr" merge'), { depth: 2 })),
+        ["pr", "merge"],
+      );
     });
 
     it('--repo=x/y attached form: one token, "pr" extracted', () => {
