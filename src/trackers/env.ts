@@ -48,7 +48,7 @@
 import type { Word } from "unbash";
 import { isIdentifierName } from "../internal/identifier.ts";
 import { seedProcessEnv } from "../internal/seed-process-env.ts";
-import { resolveWord } from "../resolve-word.ts";
+import { expandTildeIfLeading, resolveWord } from "../resolve-word.ts";
 import type { Modifier, Tracker } from "../tracker.ts";
 
 /**
@@ -72,6 +72,14 @@ export type EnvState = ReadonlyMap<string, string>;
  * `=` — same splitting rule as raw token parsing, but applied
  * after static resolution so `FOO="value with=sign"` resolves
  * to name="FOO" / value="value with=sign" cleanly.
+ *
+ * Tilde expansion in the RHS (issue #13): bash expands a leading
+ * `~` after the `=` in assignments (`VAULT=~/x` → `$HOME/x`), but
+ * NOT when it is quoted (`VAULT="~/x"` stays literal).
+ * `resolveWord` strips quotes, so by the time the resolved string
+ * reaches this function the "was it quoted?" information is lost
+ * — instead we re-apply quote awareness on the ORIGINAL word's
+ * parts (see {@link expandAssignmentValueTilde}).
  */
 function resolveAssignmentWord(
   word: Word,
@@ -79,7 +87,65 @@ function resolveAssignmentWord(
 ): { name: string; value: string } | undefined {
   const resolved = resolveWord(word, env);
   if (resolved === undefined) return undefined;
-  return parseAssignmentToken(resolved);
+  const parsed = parseAssignmentToken(resolved);
+  if (parsed === undefined) return undefined;
+  const value = expandAssignmentValueTilde(word, parsed.value, env);
+  if (value === undefined) return undefined;
+  return { name: parsed.name, value };
+}
+
+/**
+ * Bash-faithful tilde expansion of an assignment RHS, applied
+ * AFTER the split on the first `=` (issue #13).
+ *
+ * The expansion gate is two-layered:
+ *
+ *   - **Value-level** (mirrors bash's rule): expand only when the
+ *     value is a bare `~` or starts with `~/`. `~$X` (tilde
+ *     followed by a variable) stays literal in bash (`~bin`) —
+ *     excluded. `~user/x` and escaped-tilde shapes (`~\/x`) are
+ *     excluded too — `expandTildeIfLeading` returns them
+ *     unchanged, and the value-level gate skips them outright.
+ *   - **Quote-aware** (AST-level): `resolveWord` already unquoted
+ *     the value, so a quoted `"~/x"` would LOOK expandable on the
+ *     resolved string alone. Quoted tildes arrive as
+ *     DoubleQuoted / SingleQuoted parts (never a bare Literal), so
+ *     the first RHS part must be a bare `Literal` for the
+ *     expansion to apply. Every bare-assignment synthesis emits a
+ *     second part (even `FOO=` → Literal("")), so the partless
+ *     branch is export-only; there quoting is ABSENT BY
+ *     CONSTRUCTION (any quote in the source makes the parser emit
+ *     parts), so expanding the leading `~` on the raw token is
+ *     safe.
+ *
+ * Returns `undefined` when HOME is absent and the value would
+ * expand — the assignment is discarded, mirroring the fail-closed
+ * `FOO=$UNDEFINED` skip (env.has(NAME) stays false).
+ */
+function expandAssignmentValueTilde(
+  word: Word,
+  value: string,
+  env: EnvState,
+): string | undefined {
+  if (!(value === "~" || value.startsWith("~/"))) return value;
+
+  const parts = word.parts ?? [];
+  const firstRhs = parts[1];
+  if (parts.length >= 2) {
+    // Bare-assignment synthesis (`VAULT=~/x` → [Literal("VAULT="),
+    // Literal("~/x")]). Quoted tildes arrive as DoubleQuoted /
+    // SingleQuoted / expansion parts → not Literal → left literal.
+    if (firstRhs?.type !== "Literal") return value;
+  } else if (parts.length !== 0) {
+    // Unexpected shapes (e.g. export of a fully-quoted argument
+    // `export 'VAULT=~/x'` → a single SingleQuoted part) — never
+    // expand; the quoted tilde stays literal.
+    return value;
+  }
+  // Partless word (`export VAULT=~/x` arrives as one raw token;
+  // quoting absent by construction) or the synthesized
+  // `[Literal("VAULT="), Literal("~/x")]` shape — expand.
+  return expandTildeIfLeading(value, env);
 }
 
 // --------------------------------------------------------------------------

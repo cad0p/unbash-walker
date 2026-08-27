@@ -228,11 +228,13 @@ export function resolveWordText(
  *     follow-up if it becomes an agent-bypass class.
  *   - No leading `~` → returns input unchanged.
  *
- * Not exported — only internal to `resolveWord`. The function is
- * defined outside `resolveWord` to keep the hot path inside the
- * parts-loop short (no closure).
+ * Exported for the assignment-RHS tilde rule in the env tracker
+ * (`src/trackers/env.ts:resolveAssignmentWord`) — the same
+ * quote-aware semantics, applied to the value after the first `=`.
+ * The function is defined outside `resolveWord` to keep the hot
+ * path inside the parts-loop short (no closure).
  */
-function expandTildeIfLeading(
+export function expandTildeIfLeading(
   s: string,
   env: ReadonlyMap<string, string>,
 ): string | undefined {
