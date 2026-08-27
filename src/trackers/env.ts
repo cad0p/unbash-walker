@@ -48,7 +48,7 @@
 import type { Word } from "unbash";
 import { isIdentifierName } from "../internal/identifier.ts";
 import { seedProcessEnv } from "../internal/seed-process-env.ts";
-import { resolveWord } from "../resolve-word.ts";
+import { expandTildeIfLeading, resolveWord } from "../resolve-word.ts";
 import type { Modifier, Tracker } from "../tracker.ts";
 
 /**
@@ -72,6 +72,14 @@ export type EnvState = ReadonlyMap<string, string>;
  * `=` — same splitting rule as raw token parsing, but applied
  * after static resolution so `FOO="value with=sign"` resolves
  * to name="FOO" / value="value with=sign" cleanly.
+ *
+ * Tilde expansion in the RHS (issue #13): bash expands a leading
+ * `~` after the `=` in assignments (`VAULT=~/x` → `$HOME/x`), but
+ * NOT when it is quoted (`VAULT="~/x"` stays literal).
+ * `resolveWord` strips quotes, so by the time the resolved string
+ * reaches this function the "was it quoted?" information is lost
+ * — instead we re-apply quote awareness on the ORIGINAL word's
+ * parts (see {@link expandAssignmentValueTilde}).
  */
 function resolveAssignmentWord(
   word: Word,
@@ -79,7 +87,136 @@ function resolveAssignmentWord(
 ): { name: string; value: string } | undefined {
   const resolved = resolveWord(word, env);
   if (resolved === undefined) return undefined;
-  return parseAssignmentToken(resolved);
+  const parsed = parseAssignmentToken(resolved);
+  if (parsed === undefined) return undefined;
+  const value = expandAssignmentValueTilde(word, parsed.value, env);
+  if (value === undefined) return undefined;
+  return { name: parsed.name, value };
+}
+
+/**
+ * Bash-faithful tilde expansion of an assignment RHS, applied
+ * AFTER the split on the first `=` (issue #13).
+ *
+ * The expansion gate is two-layered:
+ *
+ *   - **Value-level** (mirrors bash's rule): expand only when the
+ *     value is a bare `~` or starts with `~/`. `~$X` (tilde
+ *     followed by a variable) stays literal in bash (`~bin`) —
+ *     excluded. `~user/x` and escaped-tilde shapes (`~\/x`) are
+ *     excluded too — `expandTildeIfLeading` returns them
+ *     unchanged, and the value-level gate skips them outright.
+ *   - **Quote-aware** (AST-level): `resolveWord` already unquoted
+ *     the value, so a quoted `"~/x"` would LOOK expandable on the
+ *     resolved string alone. Quoted tildes arrive as
+ *     DoubleQuoted / SingleQuoted parts (never a bare Literal), so
+ *     the first RHS part must be a bare `Literal` for the
+ *     expansion to apply. Every bare-assignment synthesis emits a
+ *     second part (even `FOO=` → Literal("")), so the partless
+ *     branch is export-only; there quoting is ABSENT BY
+ *     CONSTRUCTION (any quote in the source makes the parser emit
+ *     parts), so expanding the leading `~` on the raw token is
+ *     safe.
+ *
+ * The tilde-bearing PREFIX of the value must be a contiguous run
+ * of bare-Literal parts — a quoted tilde ANYWHERE before the
+ * first `/` keeps the value literal (`VAULT=~"x"` and
+ * `VAULT="~"x` stay literal, matching bash). Only the final
+ * (typically single) bare-Literal prefix part may carry the `~`;
+ * every part before it must also be a bare Literal so a quoted
+ * prefix (`VAULT="~"x`) cannot smuggle a tilde past the gate.
+ *
+ * Returns `undefined` when HOME is absent and the value would
+ * expand — the assignment is discarded, mirroring the fail-closed
+ * `FOO=$UNDEFINED` skip (env.has(NAME) stays false).
+ */
+function expandAssignmentValueTilde(
+  word: Word,
+  value: string,
+  env: EnvState,
+): string | undefined {
+  if (!(value === "~" || value.startsWith("~/"))) return value;
+
+  const parts = word.parts ?? [];
+  // Bare-assignment synthesis emits parts[0] = Literal("NAME=") then
+  // the RHS parts. The tilde-bearing PREFIX of the RHS must be a
+  // contiguous run of bare-Literal parts: a quoted tilde anywhere
+  // before the first `/` keeps the value literal (`VAULT=~"x"` and
+  // `VAULT="~"x` stay literal, matching bash). parts[0] (the
+  // `NAME=` leader) is part of that prefix, so every part up to and
+  // including the first `~/`-carrying literal must be a bare Literal.
+  // Parts AFTER the first `/` (e.g. the `$X` in `VAULT=~/$X`) are
+  // not part of the tilde prefix and don't block expansion.
+  //
+  // Structural, not positional: scan the parts in order, summing
+  // their UNQUOTED lengths (part.value ?? 0 — quoted parts have no
+  // resolved value) until we've covered the first `/` in the
+  // resolved value. Every part contributing to that prefix must be
+  // a bare Literal.
+  if (parts.length >= 2) {
+    // Bare tilde (`~` alone, no slash) always expands when the RHS
+    // is a single bare Literal after the leader.
+    if (value === "~") {
+      const rhs = parts.slice(1);
+      if (rhs.length === 1 && rhs[0]?.type === "Literal") {
+        return expandTildeIfLeading(value, env);
+      }
+      return value;
+    }
+    const slash = value.indexOf("/");
+    if (slash === -1) return value;
+    // The tilde sits at value offset 0 (after the `NAME=` leader is
+    // stripped). Find the part that CARRIES the `~` — it must be a
+    // bare Literal (a quoted name at parts[0] — `export 'VAULT'=~/x`
+    // → [SingleQuoted("VAULT"), Literal("=~/x")] — ends the search
+    // before the `~`, keeping the value literal, matching bash).
+    // From that part, the contiguous run of bare Literals must reach
+    // STRICTLY PAST the first `/` (the `/` belongs to a Literal part
+    // only if that part also contributes content after it). Quoted
+    // parts anywhere before the `/` — `VAULT="~/x"`, `VAULT=~"x"`,
+    // `VAULT="~"x` — end the run and keep the value literal.
+    let tildeIdx = -1;
+    let tildeOffset = 0; // value offset of the `~` within its part
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.type !== "Literal") break; // quoted name/leader ends it
+      const v = p.value ?? "";
+      const t = v.indexOf("~");
+      if (t !== -1) {
+        tildeIdx = i;
+        tildeOffset = t;
+        break;
+      }
+      tildeOffset += v.length;
+    }
+    if (tildeIdx === -1) return value;
+    // Measure the run length from the `~` itself (value offset 0):
+    // the tilde-bearing part contributes `len - tildeOffset`, later
+    // Literals contribute fully. This keeps the comparison in the
+    // value coordinate space even when the `=` sits inside the
+    // tilde-carrying literal (`export VAULT=~/x` → parts
+    // [Literal("VAULT=~"), …], tildeOffset 6).
+    let runLen = 0;
+    for (let i = tildeIdx; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.type !== "Literal") break;
+      const v = p.value ?? "";
+      runLen += i === tildeIdx ? v.length - tildeOffset : v.length;
+    }
+    // Strictly past the slash: `runLen > slash` (not `>=`) — a run
+    // ending exactly AT the slash means the `/` is the first char of
+    // a non-Literal part (`VAULT=~"/x"` → runLen 1 == slash 1).
+    if (runLen <= slash) return value;
+  } else if (parts.length !== 0) {
+    // Unexpected shapes (e.g. export of a fully-quoted argument
+    // `export 'VAULT=~/x'` → a single SingleQuoted part) — never
+    // expand; the quoted tilde stays literal.
+    return value;
+  }
+  // Partless word (`export VAULT=~/x` arrives as one raw token;
+  // quoting absent by construction) or the synthesized
+  // `[Literal("VAULT="), Literal("~/x")]` shape — expand.
+  return expandTildeIfLeading(value, env);
 }
 
 // --------------------------------------------------------------------------

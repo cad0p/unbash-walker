@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { parse as parseBash } from "unbash";
 import { getBasename } from "../resolve.ts";
 import { walk } from "../tracker.ts";
+import { cwdTracker } from "./cwd.ts";
 import { type EnvState, envTracker } from "./env.ts";
 
 /**
@@ -46,6 +47,23 @@ function envByOrder(
 /** Env map at the LAST command in the script. */
 function finalEnv(raw: string, initial?: EnvState): EnvState {
   const ordered = envByOrder(raw, initial);
+  const last = ordered[ordered.length - 1];
+  if (!last) throw new Error(`no commands extracted from: ${raw}`);
+  return last[1];
+}
+
+/** cwd snapshot at the LAST command, walking BOTH trackers. */
+function finalCwdBoth(raw: string, initial?: EnvState): string {
+  const ast = parseBash(raw);
+  const map = walk<{ cwd: string; env: EnvState }>(
+    ast,
+    { cwd: "/start", env: initial ?? new Map() },
+    { cwd: cwdTracker, env: envTracker },
+  );
+  const ordered = Array.from(
+    map,
+    ([ref, snap]) => [getBasename(ref), snap.cwd] as const,
+  );
   const last = ordered[ordered.length - 1];
   if (!last) throw new Error(`no commands extracted from: ${raw}`);
   return last[1];
@@ -114,6 +132,136 @@ describe("envTracker via walk", () => {
         new Map([["HOME", "/home/me"]]),
       );
       assert.equal(env.get("HOME_DIR"), "/home/me");
+    });
+
+    it("`VAULT=~/x; cmd` — cmd sees VAULT=/home/me/x (unquoted tilde expands)", () => {
+      // Issue #13: bash expands `~` after the `=` in assignments.
+      const env = finalEnv("VAULT=~/x; cmd", new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "/home/me/x");
+    });
+
+    it('`VAULT="~/x"; cmd` — cmd sees VAULT=~/x (quoted tilde stays literal)', () => {
+      // The naive-fix trap pinned: resolveWord unquotes, so a
+      // resolved-string-level expansion would WRONGLY expand a
+      // quoted tilde. The AST-level quote gate keeps it literal.
+      const env = finalEnv('VAULT="~/x"; cmd', new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it('`VAULT=~"/x"; cmd` — literal ~/x (quoted slash; `~` followed by `"` not `/`)', () => {
+      // Bash: only a bare `~` or `~/` expands; a tilde followed by a
+      // quote (`~"`) stays literal — the quote breaks the tilde
+      // token before any `/`. The resolved value LOOKS like `~/x`
+      // (quote stripped), so this pins the AST-prefix gate that
+      // must keep it literal.
+      const env = finalEnv('VAULT=~"/x"; cmd', new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it('`VAULT="~"/x; cmd` — literal ~/x (quoted tilde prefix, bare slash)', () => {
+      // Complement shape: the tilde itself is quoted, the `/x` is
+      // bare. The prefix run contains a DoubleQuoted part before
+      // the first `/` → gate blocks, value stays literal (bash).
+      const env = finalEnv('VAULT="~"/x; cmd', new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it("`VAULT=~; cmd` — cmd sees VAULT=/home/me (bare tilde)", () => {
+      const env = finalEnv("VAULT=~; cmd", new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "/home/me");
+    });
+
+    it("`VAULT=~/$X; cmd` with X=sub — tilde+param concat expands to /home/me/sub", () => {
+      // Bash: `~/$X` → `$HOME/` + expansion. The RHS splits into
+      // Literal("~/") + SimpleExpansion; the value gate (`~/`
+      // prefix) plus the Literal-parts gate both pass.
+      const env = finalEnv(
+        "VAULT=~/$X; cmd",
+        new Map([
+          ["HOME", "/home/me"],
+          ["X", "sub"],
+        ]),
+      );
+      assert.equal(env.get("VAULT"), "/home/me/sub");
+    });
+
+    it("`VAULT=~/$X; cmd` with X absent — VAULT not set (fail-closed)", () => {
+      // The RHS is unresolvable overall (unknown $X makes
+      // resolveWord return undefined) — assignment discarded.
+      const env = finalEnv("VAULT=~/$X; cmd", new Map([["HOME", "/home/me"]]));
+      assert.equal(env.has("VAULT"), false);
+    });
+
+    it('`VAULT=~/x && F="$VAULT/y" && cmd` — F=/home/me/x/y (multi-hop through tilde value)', () => {
+      const env = finalEnv(
+        'VAULT=~/x && F="$VAULT/y" && cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "/home/me/x");
+      assert.equal(env.get("F"), "/home/me/x/y");
+    });
+
+    it('`D=~/repo && cd "$D" && cmd` — env D=/home/me/repo (cwd corruption regression)', () => {
+      // Issue #13 symptom 2: before the fix, cd "$D" resolved to
+      // the literal-tilde value → garbage cwd path. The env fix
+      // alone must make the walker track cmd at /home/me/repo.
+      const cwd = finalCwdBoth(
+        'D=~/repo && cd "$D" && cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(cwd, "/home/me/repo");
+    });
+
+    it("`HOME_DIR=$HOME; cmd` still resolves (existing multi-hop unaffected)", () => {
+      // Regression guard for the RHS gate: a plain $HOME RHS has no
+      // `~` value, so it must not be affected by the tilde rule.
+      const env = finalEnv(
+        "HOME_DIR=$HOME; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("HOME_DIR"), "/home/me");
+    });
+
+    it("`VAULT=~/x; cmd` with HOME absent — VAULT not set (fail-closed)", () => {
+      // Mirrors the FOO=$UNDEFINED skip: an expandable tilde with no
+      // HOME is unresolvable → assignment discarded, env.has false.
+      const env = finalEnv("VAULT=~/x; cmd", new Map());
+      assert.equal(env.has("VAULT"), false);
+    });
+
+    it("`VAULT=~$X; cmd` with X=bin — literal ~bin (bash: `~` not followed by `/`)", () => {
+      const env = finalEnv(
+        "VAULT=~$X; cmd",
+        new Map([
+          ["HOME", "/home/me"],
+          ["X", "bin"],
+        ]),
+      );
+      assert.equal(env.get("VAULT"), "~bin");
+    });
+
+    it("`VAULT=~$X/foo; cmd` with X=bin — literal ~bin/foo", () => {
+      const env = finalEnv(
+        "VAULT=~$X/foo; cmd",
+        new Map([
+          ["HOME", "/home/me"],
+          ["X", "bin"],
+        ]),
+      );
+      assert.equal(env.get("VAULT"), "~bin/foo");
+    });
+
+    it("`VAULT=~user/x; cmd` — literal ~user/x (unknown user unchanged)", () => {
+      const env = finalEnv(
+        "VAULT=~user/x; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~user/x");
+    });
+
+    it("`VAULT=~\\/x; cmd` — literal ~\\/x (escaped slash; gate excludes `~\\`)", () => {
+      const env = finalEnv("VAULT=~\\/x; cmd", new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~\\/x");
     });
 
     it("dynamic value `FOO=$(pwd)` — skipped; FOO not set", () => {
@@ -213,6 +361,82 @@ describe("envTracker via walk", () => {
   });
 
   describe("export", () => {
+    it("`export VAULT=~/x; cmd` — /home/me/x (export path shares the fix)", () => {
+      // `export VAULT=~/x` arrives at the modifier as a PARTLESS
+      // word (single raw token) — quoting absent by construction.
+      const env = finalEnv(
+        "export VAULT=~/x; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "/home/me/x");
+    });
+
+    it('`export VAULT="~/x"; cmd` — literal ~/x (quoted preserved)', () => {
+      const env = finalEnv(
+        'export VAULT="~/x"; cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it("`export 'VAULT'=~/x; cmd` — literal ~/x (quoted name → no tilde expansion)", () => {
+      // Bash: a quoted assignment NAME suppresses tilde expansion of
+      // the value (`export 'VAULT'=~/x` → `~/x`). The word arrives
+      // as [SingleQuoted("VAULT"), Literal("=~/x")] — the quoted
+      // name at parts[0] ends the bare-Literal run immediately, so
+      // the gate keeps the value literal.
+      const env = finalEnv(
+        "export 'VAULT'=~/x; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it('`export "VAULT"=~/x; cmd` — literal ~/x (quoted name → no tilde expansion)', () => {
+      const env = finalEnv(
+        'export "VAULT"=~/x; cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it("`export VAULT=~$X; cmd` with X=bin — literal ~bin (parts[1] is SimpleExpansion)", () => {
+      const env = finalEnv(
+        "export VAULT=~$X; cmd",
+        new Map([
+          ["HOME", "/home/me"],
+          ["X", "bin"],
+        ]),
+      );
+      assert.equal(env.get("VAULT"), "~bin");
+    });
+
+    it("`export VAULT=~; cmd` — /home/me (partless bare tilde)", () => {
+      const env = finalEnv(
+        "export VAULT=~; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "/home/me");
+    });
+
+    it('`export VAULT=~"/x"; cmd` — literal ~/x (quoted slash; `~` followed by `"` not `/`)', () => {
+      const env = finalEnv(
+        'export VAULT=~"/x"; cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it("`export VAULT=~$X; cmd` with X absent — no-op; VAULT not set", () => {
+      const env = finalEnv("export VAULT=~$X; cmd", new Map());
+      assert.equal(env.has("VAULT"), false);
+    });
+
+    it("`export VAULT=~/x; cmd` with HOME absent — VAULT not set (fail-closed)", () => {
+      const env = finalEnv("export VAULT=~/x; cmd", new Map());
+      assert.equal(env.has("VAULT"), false);
+    });
+
     it("`export FOO=bar; cmd` — cmd sees FOO=bar", () => {
       const env = finalEnv("export FOO=bar; cmd");
       assert.equal(env.get("FOO"), "bar");

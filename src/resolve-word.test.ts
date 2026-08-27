@@ -12,7 +12,11 @@ import { describe, it } from "node:test";
 import type { Word } from "unbash";
 import { parse as parseBash } from "unbash";
 import { extractAllCommandsFromAST } from "./extract.ts";
-import { resolveWord, resolveWordText } from "./resolve-word.ts";
+import {
+  expandTildeIfLeading,
+  resolveWord,
+  resolveWordText,
+} from "./resolve-word.ts";
 
 /**
  * Parse `cd X` and pluck the `X` word — the simplest reliable
@@ -181,6 +185,23 @@ describe("resolveWord", () => {
     it("interior ~ is literal (not at word start)", () => {
       const w = wordFromCdArg("/a/~");
       assert.equal(resolveWord(w, new Map([["HOME", "/home/me"]])), "/a/~");
+    });
+
+    it("expandTildeIfLeading — exported helper pins (issue #13)", () => {
+      // Public-surface pin for the helper the env tracker now uses on
+      // assignment RHS values. Semantics identical to word-start use.
+      const HOME = new Map([["HOME", "/home/me"]]);
+      assert.equal(expandTildeIfLeading("~/x", HOME), "/home/me/x");
+      assert.equal(expandTildeIfLeading("~", HOME), "/home/me");
+      assert.equal(expandTildeIfLeading("~user", HOME), "~user");
+      assert.equal(expandTildeIfLeading("~$X", HOME), "~$X");
+      assert.equal(expandTildeIfLeading("/a/~", HOME), "/a/~");
+      assert.equal(expandTildeIfLeading("plain", HOME), "plain");
+      // HOME absent → undefined for expandable shapes; non-tilde unchanged.
+      assert.equal(expandTildeIfLeading("~/x", new Map()), undefined);
+      assert.equal(expandTildeIfLeading("~", new Map()), undefined);
+      assert.equal(expandTildeIfLeading("~user", new Map()), "~user");
+      assert.equal(expandTildeIfLeading("plain", new Map()), "plain");
     });
   });
 
