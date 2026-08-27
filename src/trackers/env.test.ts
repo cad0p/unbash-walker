@@ -148,6 +148,24 @@ describe("envTracker via walk", () => {
       assert.equal(env.get("VAULT"), "~/x");
     });
 
+    it('`VAULT=~"/x"; cmd` — literal ~/x (quoted slash; `~` followed by `"` not `/`)', () => {
+      // Bash: only a bare `~` or `~/` expands; a tilde followed by a
+      // quote (`~"`) stays literal — the quote breaks the tilde
+      // token before any `/`. The resolved value LOOKS like `~/x`
+      // (quote stripped), so this pins the AST-prefix gate that
+      // must keep it literal.
+      const env = finalEnv('VAULT=~"/x"; cmd', new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it('`VAULT="~"/x; cmd` — literal ~/x (quoted tilde prefix, bare slash)', () => {
+      // Complement shape: the tilde itself is quoted, the `/x` is
+      // bare. The prefix run contains a DoubleQuoted part before
+      // the first `/` → gate blocks, value stays literal (bash).
+      const env = finalEnv('VAULT="~"/x; cmd', new Map([["HOME", "/home/me"]]));
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
     it("`VAULT=~; cmd` — cmd sees VAULT=/home/me (bare tilde)", () => {
       const env = finalEnv("VAULT=~; cmd", new Map([["HOME", "/home/me"]]));
       assert.equal(env.get("VAULT"), "/home/me");

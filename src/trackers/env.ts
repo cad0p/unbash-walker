@@ -118,6 +118,14 @@ function resolveAssignmentWord(
  *     parts), so expanding the leading `~` on the raw token is
  *     safe.
  *
+ * The tilde-bearing PREFIX of the value must be a contiguous run
+ * of bare-Literal parts — a quoted tilde ANYWHERE before the
+ * first `/` keeps the value literal (`VAULT=~"x"` and
+ * `VAULT="~"x` stay literal, matching bash). Only the final
+ * (typically single) bare-Literal prefix part may carry the `~`;
+ * every part before it must also be a bare Literal so a quoted
+ * prefix (`VAULT="~"x`) cannot smuggle a tilde past the gate.
+ *
  * Returns `undefined` when HOME is absent and the value would
  * expand — the assignment is discarded, mirroring the fail-closed
  * `FOO=$UNDEFINED` skip (env.has(NAME) stays false).
@@ -130,12 +138,59 @@ function expandAssignmentValueTilde(
   if (!(value === "~" || value.startsWith("~/"))) return value;
 
   const parts = word.parts ?? [];
-  const firstRhs = parts[1];
+  // Bare-assignment synthesis emits parts[0] = Literal("NAME=") then
+  // the RHS parts. The tilde-bearing PREFIX of the RHS must be a
+  // contiguous run of bare-Literal parts: a quoted tilde anywhere
+  // before the first `/` keeps the value literal (`VAULT=~"x"` and
+  // `VAULT="~"x` stay literal, matching bash). parts[0] (the
+  // `NAME=` leader) is part of that prefix, so every part up to and
+  // including the first `~/`-carrying literal must be a bare Literal.
+  // Parts AFTER the first `/` (e.g. the `$X` in `VAULT=~/$X`) are
+  // not part of the tilde prefix and don't block expansion.
+  //
+  // Structural, not positional: scan the parts in order, summing
+  // their UNQUOTED lengths (part.value ?? 0 — quoted parts have no
+  // resolved value) until we've covered the first `/` in the
+  // resolved value. Every part contributing to that prefix must be
+  // a bare Literal.
   if (parts.length >= 2) {
-    // Bare-assignment synthesis (`VAULT=~/x` → [Literal("VAULT="),
-    // Literal("~/x")]). Quoted tildes arrive as DoubleQuoted /
-    // SingleQuoted / expansion parts → not Literal → left literal.
-    if (firstRhs?.type !== "Literal") return value;
+    // Bare tilde (`~` alone, no slash) always expands when the RHS
+    // is a single bare Literal after the leader.
+    if (value === "~") {
+      const rhs = parts.slice(1);
+      if (rhs.length === 1 && rhs[0]?.type === "Literal") {
+        return expandTildeIfLeading(value, env);
+      }
+      return value;
+    }
+    const slash = value.indexOf("/");
+    if (slash === -1) return value;
+    // The tilde sits at value offset 0 (after the `NAME=` leader is
+    // stripped). The tilde-bearing PREFIX must be a contiguous run of
+    // bare-Literal parts: find the leading run of Literals AFTER the
+    // `NAME=` leader and require the part that carries the first `/`
+    // to be INSIDE it (the run's resolved length must reach STRICTLY
+    // PAST the slash — the `/` belongs to a Literal part only if
+    // that part also contributes content after it). If a
+    // quoted/expansion part appears before the `/` — `VAULT="~/x"`,
+    // `VAULT=~"x"`, `VAULT="~"x`, `VAULT=~/$X` — the run ends
+    // before the slash and the value stays literal. DoubleQuoted
+    // parts carry `value: undefined`, so their content is invisible
+    // to the resolved-length sum — that's exactly the point: the run
+    // of Literals stops there. The leader (`parts[0]`, the `NAME=`)
+    // is skipped: its length is in the pre-`=` region, not the value
+    // whose offset space `slash` lives in.
+    let runLen = 0;
+    let i = 1;
+    for (; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.type !== "Literal") break;
+      runLen += p.value?.length ?? 0;
+    }
+    // Strictly past the slash: `runLen > slash` (not `>=`) — a run
+    // ending exactly AT the slash means the `/` is the first char of
+    // a non-Literal part (`VAULT=~"/x"` → runLen 1 == slash 1).
+    if (runLen <= slash) return value;
   } else if (parts.length !== 0) {
     // Unexpected shapes (e.g. export of a fully-quoted argument
     // `export 'VAULT=~/x'` → a single SingleQuoted part) — never
