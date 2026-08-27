@@ -182,7 +182,11 @@ function expandAssignmentValueTilde(
       if (p.type !== "Literal") break; // quoted name/leader ends it
       const v = p.value ?? "";
       const t = v.indexOf("~");
-      if (t !== -1) { tildeIdx = i; tildeOffset = t; break; }
+      if (t !== -1) {
+        tildeIdx = i;
+        tildeOffset = t;
+        break;
+      }
       tildeOffset += v.length;
     }
     if (tildeIdx === -1) return value;
