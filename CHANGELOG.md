@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - ResolveWordText — text-mode word resolution with process-substitution inner expansion (closes #5)
 - GetSubcommandWords + bundleContains — argv-structured subcommand extraction (closes #8)
 
+### 🐛 Bug Fixes
+
+- *(env)* Tilde expansion in assignment RHS (VAR=~/x) (closes #13)
+
 
 ## [0.1.0] — 2026-08-10
 
