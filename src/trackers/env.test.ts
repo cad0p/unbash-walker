@@ -379,6 +379,27 @@ describe("envTracker via walk", () => {
       assert.equal(env.get("VAULT"), "~/x");
     });
 
+    it("`export 'VAULT'=~/x; cmd` — literal ~/x (quoted name → no tilde expansion)", () => {
+      // Bash: a quoted assignment NAME suppresses tilde expansion of
+      // the value (`export 'VAULT'=~/x` → `~/x`). The word arrives
+      // as [SingleQuoted("VAULT"), Literal("=~/x")] — the quoted
+      // name at parts[0] ends the bare-Literal run immediately, so
+      // the gate keeps the value literal.
+      const env = finalEnv(
+        "export 'VAULT'=~/x; cmd",
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
+    it('`export "VAULT"=~/x; cmd` — literal ~/x (quoted name → no tilde expansion)', () => {
+      const env = finalEnv(
+        'export "VAULT"=~/x; cmd',
+        new Map([["HOME", "/home/me"]]),
+      );
+      assert.equal(env.get("VAULT"), "~/x");
+    });
+
     it("`export VAULT=~$X; cmd` with X=bin — literal ~bin (parts[1] is SimpleExpansion)", () => {
       const env = finalEnv(
         "export VAULT=~$X; cmd",

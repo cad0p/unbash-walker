@@ -166,26 +166,38 @@ function expandAssignmentValueTilde(
     const slash = value.indexOf("/");
     if (slash === -1) return value;
     // The tilde sits at value offset 0 (after the `NAME=` leader is
-    // stripped). The tilde-bearing PREFIX must be a contiguous run of
-    // bare-Literal parts: find the leading run of Literals AFTER the
-    // `NAME=` leader and require the part that carries the first `/`
-    // to be INSIDE it (the run's resolved length must reach STRICTLY
-    // PAST the slash — the `/` belongs to a Literal part only if
-    // that part also contributes content after it). If a
-    // quoted/expansion part appears before the `/` — `VAULT="~/x"`,
-    // `VAULT=~"x"`, `VAULT="~"x`, `VAULT=~/$X` — the run ends
-    // before the slash and the value stays literal. DoubleQuoted
-    // parts carry `value: undefined`, so their content is invisible
-    // to the resolved-length sum — that's exactly the point: the run
-    // of Literals stops there. The leader (`parts[0]`, the `NAME=`)
-    // is skipped: its length is in the pre-`=` region, not the value
-    // whose offset space `slash` lives in.
+    // stripped). Find the part that CARRIES the `~` — it must be a
+    // bare Literal (a quoted name at parts[0] — `export 'VAULT'=~/x`
+    // → [SingleQuoted("VAULT"), Literal("=~/x")] — ends the search
+    // before the `~`, keeping the value literal, matching bash).
+    // From that part, the contiguous run of bare Literals must reach
+    // STRICTLY PAST the first `/` (the `/` belongs to a Literal part
+    // only if that part also contributes content after it). Quoted
+    // parts anywhere before the `/` — `VAULT="~/x"`, `VAULT=~"x"`,
+    // `VAULT="~"x` — end the run and keep the value literal.
+    let tildeIdx = -1;
+    let tildeOffset = 0; // value offset of the `~` within its part
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      if (p.type !== "Literal") break; // quoted name/leader ends it
+      const v = p.value ?? "";
+      const t = v.indexOf("~");
+      if (t !== -1) { tildeIdx = i; tildeOffset = t; break; }
+      tildeOffset += v.length;
+    }
+    if (tildeIdx === -1) return value;
+    // Measure the run length from the `~` itself (value offset 0):
+    // the tilde-bearing part contributes `len - tildeOffset`, later
+    // Literals contribute fully. This keeps the comparison in the
+    // value coordinate space even when the `=` sits inside the
+    // tilde-carrying literal (`export VAULT=~/x` → parts
+    // [Literal("VAULT=~"), …], tildeOffset 6).
     let runLen = 0;
-    let i = 1;
-    for (; i < parts.length; i++) {
+    for (let i = tildeIdx; i < parts.length; i++) {
       const p = parts[i]!;
       if (p.type !== "Literal") break;
-      runLen += p.value?.length ?? 0;
+      const v = p.value ?? "";
+      runLen += i === tildeIdx ? v.length - tildeOffset : v.length;
     }
     // Strictly past the slash: `runLen > slash` (not `>=`) — a run
     // ending exactly AT the slash means the `/` is the first char of
