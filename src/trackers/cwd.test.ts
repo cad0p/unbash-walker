@@ -800,6 +800,29 @@ describe("cwdTracker + envTracker integration (env-aware cd)", () => {
     assert.equal(cwds["cmd"], "/ws/src");
   });
 
+  it('D=~/repo && cd "$D" — cwd tracks the HOME-expanded path (issue #13)', () => {
+    // Before the env-RHS tilde fix, cd "$D" resolved against the
+    // literal `~/repo` value → garbage `/start/~/repo`-style cwd.
+    // With the fix, D=/home/me/repo and cd "$D" lands on it.
+    const cwds = cwdByNameFull('D=~/repo && cd "$D" && cmd', {
+      cwd: "/start",
+      env: new Map([["HOME", "/home/me"]]),
+    });
+    assert.equal(cwds["cmd"], "/home/me/repo");
+  });
+
+  it('D=~/repo && cd "$D" — env snapshot for cmd has D expanded (issue #13)', () => {
+    const out: Record<string, EnvState> = {};
+    for (const [ref, snap] of walkCwdEnv('D=~/repo && cd "$D" && cmd', {
+      cwd: "/start",
+      env: new Map([["HOME", "/home/me"]]),
+    })) {
+      const name = getBasename(ref);
+      if (!(name in out)) out[name] = snap.env;
+    }
+    assert.equal(out["cmd"]?.get("D"), "/home/me/repo");
+  });
+
   it("${VAR} brace form resolves the same as $VAR", () => {
     const cwds = cwdByNameFull('WS=/ws; cd "${WS}/pkg"; cmd', {
       cwd: "/start",
