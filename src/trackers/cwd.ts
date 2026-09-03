@@ -282,6 +282,9 @@ function hasStaticTarget(w: Word | undefined): boolean {
  *
  * Boundary null (all-flag invocation, e.g. bare `git -C`) rebases to
  * args.length so the malformed-target guard still sees the trailing pair.
+ * This rebase is git-local prefix composition (a missing `-C` target means
+ * "no override"): NOT a steering precedent — steering consumers treat a
+ * null subcommand run as unknown/block, never as an allow-shaped offset.
  *
  * Long flags (`--foo`, `--foo=value`, `--paginate`, `--no-pager`) are single
  * tokens. `--git-dir=/path` and `--work-tree=/path` are documented as not
