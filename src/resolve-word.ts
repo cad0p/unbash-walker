@@ -103,12 +103,11 @@ export function resolveWord(
   word: Word,
   env: ReadonlyMap<string, string>,
 ): string | undefined {
-  // No parts: the word is a simple literal. Use `value` (lexical
-  // value, unquoted) if present, otherwise fall back to `text`
-  // (raw source). This matches the fallback path in the walker's
-  // legacy `wordValue` helper.
+  // No parts: the word is a simple literal. Upstream guarantees
+  // `value` (lexical value, unquoted) on every Word, so read it
+  // directly — no `text` fallback.
   if (!word.parts || word.parts.length === 0) {
-    const bare = word.value ?? word.text;
+    const bare = word.value;
     // Tilde expansion at word start: `~`, `~/…`. Only applies when
     // the token actually starts with `~` in the raw source — if a
     // user writes `"~"` the parser produces a SingleQuoted /

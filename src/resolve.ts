@@ -7,7 +7,7 @@ import * as path from "node:path";
 import type { CommandRef } from "./types.ts";
 
 export function getCommandName(cmd: CommandRef): string {
-  if (cmd.node.name) return cmd.node.name.value ?? cmd.node.name.text;
+  if (cmd.node.name) return cmd.node.name.value;
   // Assignment-only command (e.g. TOKEN=$(...)): use the variable name
   if (cmd.node.prefix.length > 0 && cmd.node.prefix[0]?.name) {
     return cmd.node.prefix[0].name;
@@ -22,7 +22,7 @@ export function isBareAssignment(cmd: CommandRef): boolean {
 }
 
 export function getCommandArgs(cmd: CommandRef): string[] {
-  return cmd.node.suffix.map((word) => word.value ?? word.text);
+  return cmd.node.suffix.map((word) => word.value);
 }
 
 /**

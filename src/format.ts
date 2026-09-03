@@ -142,7 +142,7 @@ function heredocMarker(redirect: Redirect, source: string): string {
 function rawHeredocMarker(redirect: Redirect, source: string): string {
   if (!redirect.target) return "";
   const raw = displayWord(redirect.target, source);
-  return raw.length > 0 ? raw : (redirect.target.value ?? redirect.target.text);
+  return raw.length > 0 ? raw : redirect.target.value;
 }
 
 function displayWord(word: Word | undefined, source: string): string {

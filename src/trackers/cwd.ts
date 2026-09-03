@@ -58,6 +58,7 @@
 import * as path from "node:path";
 import type { Word } from "unbash";
 import { seedProcessEnv } from "../internal/seed-process-env.ts";
+import { wordValue } from "../internal/word-value.ts";
 import { resolveWord } from "../resolve-word.ts";
 // Internal primitive (deliberately NOT re-exported from index root): the
 // git modifier consumes only its boundary index, not the public API.
@@ -239,10 +240,6 @@ const cdModifier: Modifier<string, { env: EnvState }> = {
 // `cwd-override-flags.ts` resolvers. The shape changes (same function body
 // wrapped as a `per-command` Modifier instead of a side-table entry), but
 // the behavior is identical to keep every pre-existing test passing.
-
-function wordValue(w: Word | undefined): string | undefined {
-  return w?.value ?? w?.text;
-}
 
 /** Apply a single directory change: absolute replaces, relative joins. */
 function applyDir(current: string, target: string): string {
