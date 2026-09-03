@@ -35,7 +35,11 @@ export {
   isBareAssignment,
 } from "./resolve.ts";
 
-export { resolveWord, resolveWordText } from "./resolve-word.ts";
+export {
+  expandTildeIfLeading,
+  resolveWord,
+  resolveWordText,
+} from "./resolve-word.ts";
 export {
   bundleContains,
   DEFAULT_POSITION_POLICIES,
