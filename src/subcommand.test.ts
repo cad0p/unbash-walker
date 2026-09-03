@@ -16,7 +16,9 @@ import { extractAllCommandsFromAST } from "./extract.ts";
 import {
   bundleContains,
   DEFAULT_POSITION_POLICIES,
+  getSubcommandRun,
   getSubcommandWords,
+  locateSubcommandRun,
   locateSubcommandStart,
 } from "./subcommand.ts";
 import type { CommandRef } from "./types.ts";
@@ -385,6 +387,389 @@ describe("locateSubcommandStart", () => {
       }),
       0,
     );
+  });
+});
+
+/** Quote-aware projection of a subcommand run's words. */
+function runTexts(run: { words: readonly Word[] } | null): string[] | null {
+  return run === null ? null : run.words.map((w) => w.value ?? w.text);
+}
+
+describe("locateSubcommandRun", () => {
+  it("non-contiguous pin: aws s3 --profile x ls → indices=[0,3], words=[s3,ls]", () => {
+    const suffix = refOf("aws s3 --profile x ls").node.suffix;
+    const run = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+      valueConsumingFlags: ["--profile"],
+    });
+    assert.deepEqual(run?.indices, [0, 3]);
+    assert.deepEqual(runTexts(run), ["s3", "ls"]);
+    assert.equal(run?.start, 0);
+  });
+
+  it("has start but NO end/tailStart field", () => {
+    const suffix = refOf("aws s3 ls").node.suffix;
+    const run = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+    });
+    assert.equal(run?.start, 0);
+    assert.equal("end" in (run as unknown as Record<string, unknown>), false);
+    assert.equal(
+      "tailStart" in (run as unknown as Record<string, unknown>),
+      false,
+    );
+  });
+
+  it("truncated depth: same argv depth=1 → indices=[0], start=0 (no tail inference)", () => {
+    const suffix = refOf("aws s3 --profile x ls").node.suffix;
+    const run = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 1,
+      valueConsumingFlags: ["--profile"],
+    });
+    assert.deepEqual(run?.indices, [0]);
+    assert.deepEqual(runTexts(run), ["s3"]);
+    assert.equal(run?.start, 0);
+  });
+
+  it("depth > available positionals → partial run (gh pr, depth=2 → indices=[0])", () => {
+    const suffix = refOf("gh pr").node.suffix;
+    const run = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+      valueConsumingFlags: ["-R"],
+    });
+    assert.deepEqual(run?.indices, [0]);
+    assert.deepEqual(runTexts(run), ["pr"]);
+    assert.equal(run?.start, 0);
+  });
+
+  it("footgun pin: git -C push push (-C declared) → indices=[2], not the skipped value at 1", () => {
+    const suffix = refOf("git -C push push").node.suffix;
+    const run = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-before-only",
+      valueConsumingFlags: ["-C"],
+    });
+    assert.deepEqual(run?.indices, [2]);
+    assert.deepEqual(runTexts(run), ["push"]);
+    assert.equal(run?.start, 2);
+  });
+
+  it("depth=0 → null even with positionals", () => {
+    const suffix = refOf("gh pr merge").node.suffix;
+    assert.equal(
+      locateSubcommandRun(suffix, {
+        positionPolicy: "globals-anywhere",
+        depth: 0,
+      }),
+      null,
+    );
+  });
+
+  it("empty words → null (no throw)", () => {
+    assert.equal(
+      locateSubcommandRun([], { positionPolicy: "globals-anywhere" }),
+      null,
+    );
+  });
+
+  it("trailing consuming flag → null (git -C, declared)", () => {
+    const suffix = refOf("git -C").node.suffix;
+    assert.equal(
+      locateSubcommandRun(suffix, {
+        positionPolicy: "globals-before-only",
+        valueConsumingFlags: ["-C"],
+      }),
+      null,
+    );
+  });
+
+  it("after-only head-null (go -v build) vs tail-flags-OK (go build -x)", () => {
+    assert.equal(
+      locateSubcommandRun(refOf("go -v build").node.suffix, {
+        positionPolicy: "globals-after-only",
+      }),
+      null,
+    );
+    const tailOk = locateSubcommandRun(refOf("go build -x").node.suffix, {
+      positionPolicy: "globals-after-only",
+    });
+    assert.deepEqual(tailOk?.indices, [0]);
+    assert.deepEqual(runTexts(tailOk), ["build"]);
+    assert.equal(tailOk?.start, 0);
+  });
+
+  it('quoted "-v" still flag-shaped; quoted "pr" still positional', () => {
+    const flagged = locateSubcommandRun(refOf('gh "-v" pr').node.suffix, {
+      positionPolicy: "globals-anywhere",
+    });
+    assert.deepEqual(flagged?.indices, [1]);
+    assert.deepEqual(runTexts(flagged), ["pr"]);
+    const positional = locateSubcommandRun(refOf('gh "pr" merge').node.suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+    });
+    assert.deepEqual(positional?.indices, [0, 1]);
+    assert.deepEqual(runTexts(positional), ["pr", "merge"]);
+  });
+
+  it("`--` skipped but post-`--` semantics NOT modelled", () => {
+    const run = locateSubcommandRun(refOf("gh -- pr merge").node.suffix, {
+      positionPolicy: "globals-anywhere",
+    });
+    assert.deepEqual(run?.indices, [1]);
+    assert.deepEqual(runTexts(run), ["pr"]);
+  });
+
+  it("$VAR taken literally; consumed structurally when declared", () => {
+    const literal = locateSubcommandRun(refOf("mytool $VAR sub").node.suffix, {
+      positionPolicy: "globals-anywhere",
+    });
+    assert.deepEqual(literal?.indices, [0]);
+    assert.deepEqual(runTexts(literal), ["$VAR"]);
+    const consumed = locateSubcommandRun(refOf("git -C $WS push").node.suffix, {
+      positionPolicy: "globals-before-only",
+      valueConsumingFlags: ["-C"],
+    });
+    assert.deepEqual(consumed?.indices, [2]);
+    assert.deepEqual(runTexts(consumed), ["push"]);
+  });
+
+  it("purity: no input mutation, shared Word refs, fresh indices per call", () => {
+    const ref = refOf("aws s3 --profile x ls");
+    const before = ref.node.suffix.map((w) => w.text);
+    const opts = {
+      positionPolicy: "globals-anywhere" as const,
+      depth: 2,
+      valueConsumingFlags: ["--profile"],
+    };
+    const a = locateSubcommandRun(ref.node.suffix, opts);
+    const b = locateSubcommandRun(ref.node.suffix, opts);
+    assert.deepEqual(
+      ref.node.suffix.map((w) => w.text),
+      before,
+    );
+    assert.notStrictEqual(a?.indices, b?.indices);
+    assert.deepEqual(a?.indices, b?.indices);
+    // Shared refs, not copies: spot-check both positions.
+    assert.strictEqual(a?.words[0], ref.node.suffix[0]);
+    assert.strictEqual(a?.words[1], ref.node.suffix[3]);
+  });
+
+  it("missing/invalid positionPolicy throws TypeError naming the 3 policies", () => {
+    const suffix = refOf("git push").node.suffix;
+    const badPolicies = [undefined, "anywhere", "", 42, null];
+    for (const bad of badPolicies) {
+      assert.throws(
+        () =>
+          locateSubcommandRun(suffix, {
+            positionPolicy: bad as unknown as "globals-anywhere",
+          }),
+        (err: unknown) => {
+          assert.ok(err instanceof TypeError);
+          assert.ok(err.message.includes("globals-anywhere"));
+          assert.ok(err.message.includes("globals-before-only"));
+          assert.ok(err.message.includes("globals-after-only"));
+          return true;
+        },
+      );
+    }
+  });
+});
+
+describe("getSubcommandRun", () => {
+  it("duality: agrees with locateSubcommandRun under the table policy (gh)", () => {
+    const ref = refOf("gh -R x/y pr merge");
+    const run = getSubcommandRun(ref, {
+      depth: 2,
+      valueConsumingFlags: ["-R"],
+    });
+    const bare = locateSubcommandRun(ref.node.suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+      valueConsumingFlags: ["-R"],
+    });
+    assert.deepEqual(run?.indices, bare?.indices);
+    assert.deepEqual(runTexts(run), runTexts(bare));
+    assert.equal(run?.start, bare?.start);
+  });
+
+  it("duality: git incl. /usr/bin/git basename keying", () => {
+    for (const raw of ["git -C /path push", "/usr/bin/git -C /path push"]) {
+      const ref = refOf(raw);
+      const run = getSubcommandRun(ref, { valueConsumingFlags: ["-C"] });
+      const bare = locateSubcommandRun(ref.node.suffix, {
+        positionPolicy: "globals-before-only",
+        valueConsumingFlags: ["-C"],
+      });
+      assert.deepEqual(runTexts(run), ["push"]);
+      assert.deepEqual(run?.indices, bare?.indices);
+      assert.equal(run?.start, bare?.start);
+    }
+  });
+
+  it("duality: go table hit (after-only) — build OK, -v build null", () => {
+    const ok = getSubcommandRun(refOf("go build"));
+    assert.deepEqual(runTexts(ok), ["build"]);
+    assert.equal(ok?.start, 0);
+    assert.equal(getSubcommandRun(refOf("go -v build")), null);
+  });
+
+  it("no-opts call keeps the table + anywhere fallback (never throws)", () => {
+    assert.deepEqual(runTexts(getSubcommandRun(refOf("gh pr"))), ["pr"]);
+    assert.deepEqual(runTexts(getSubcommandRun(refOf("mytool --flag sub"))), [
+      "sub",
+    ]);
+    assert.equal(getSubcommandRun(refOf("FOO=bar")), null);
+  });
+
+  it("null parity with getSubcommandWords (all flags / trailing consuming / after-only)", () => {
+    assert.equal(runTexts(getSubcommandRun(refOf("gh -v --no-pager"))), null);
+    assert.equal(
+      runTexts(
+        getSubcommandRun(refOf("git -C"), { valueConsumingFlags: ["-C"] }),
+      ),
+      null,
+    );
+    assert.equal(runTexts(getSubcommandRun(refOf("git"))), null);
+  });
+
+  it("depth > available → partial run (gh pr, depth=2)", () => {
+    const run = getSubcommandRun(refOf("gh pr"), { depth: 2 });
+    assert.deepEqual(run?.indices, [0]);
+    assert.deepEqual(runTexts(run), ["pr"]);
+    assert.equal(run?.start, 0);
+  });
+
+  it("purity: no input mutation, shared Word refs", () => {
+    const ref = refOf("git -C /path push");
+    const run = getSubcommandRun(ref, { valueConsumingFlags: ["-C"] });
+    assert.deepEqual(
+      ref.node.suffix.map((w) => w.text),
+      ["-C", "/path", "push"],
+    );
+    assert.strictEqual(run?.words[0], ref.node.suffix[2]);
+  });
+});
+
+describe("subcommand run projection-equivalence", () => {
+  const corpus: {
+    raw: string;
+    policy: "globals-anywhere" | "globals-before-only" | "globals-after-only";
+    opts?: { depth?: number; valueConsumingFlags?: readonly string[] };
+  }[] = [
+    {
+      raw: "gh -R x/y pr merge",
+      policy: "globals-anywhere",
+      opts: { valueConsumingFlags: ["-R"] },
+    },
+    {
+      raw: "gh -R x/y pr merge",
+      policy: "globals-anywhere",
+      opts: { depth: 2, valueConsumingFlags: ["-R"] },
+    },
+    {
+      raw: "git -C /path push",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+    {
+      raw: "git push -C x",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+    {
+      raw: "/usr/bin/git -C /path push",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+    { raw: "go -v build", policy: "globals-after-only" },
+    { raw: "go build", policy: "globals-after-only" },
+    { raw: "go build -x", policy: "globals-after-only" },
+    { raw: "terraform apply -input=false", policy: "globals-after-only" },
+    { raw: "aws s3 ls", policy: "globals-anywhere", opts: { depth: 2 } },
+    {
+      raw: "aws s3 --profile x ls",
+      policy: "globals-anywhere",
+      opts: { depth: 2, valueConsumingFlags: ["--profile"] },
+    },
+    { raw: "gh pr", policy: "globals-anywhere", opts: { depth: 2 } },
+    { raw: "gh -v --no-pager", policy: "globals-anywhere" },
+    {
+      raw: "git -C",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+    { raw: "gh -- pr merge", policy: "globals-anywhere" },
+    { raw: "mytool $VAR sub", policy: "globals-anywhere" },
+    {
+      raw: "git -C $WS push",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+    { raw: 'gh "-v" pr', policy: "globals-anywhere" },
+    { raw: 'gh "pr" merge', policy: "globals-anywhere", opts: { depth: 2 } },
+    {
+      raw: "git -C push push",
+      policy: "globals-before-only",
+      opts: { valueConsumingFlags: ["-C"] },
+    },
+  ];
+  for (const { raw, policy, opts } of corpus) {
+    it(`run.words == getSubcommandWords, start == locateSubcommandStart: ${raw}`, () => {
+      const ref = refOf(raw);
+      const run = locateSubcommandRun(ref.node.suffix, {
+        positionPolicy: policy,
+        ...(opts?.depth !== undefined && { depth: opts.depth }),
+        ...(opts?.valueConsumingFlags !== undefined && {
+          valueConsumingFlags: opts.valueConsumingFlags,
+        }),
+      });
+      const words = getSubcommandWords(ref, {
+        positionPolicy: policy,
+        ...(opts?.depth !== undefined && { depth: opts.depth }),
+        ...(opts?.valueConsumingFlags !== undefined && {
+          valueConsumingFlags: opts.valueConsumingFlags,
+        }),
+      });
+      const start = locateSubcommandStart(ref.node.suffix, {
+        positionPolicy: policy,
+        ...(opts?.depth !== undefined && { depth: opts.depth }),
+        ...(opts?.valueConsumingFlags !== undefined && {
+          valueConsumingFlags: opts.valueConsumingFlags,
+        }),
+      });
+      assert.deepEqual(runTexts(run), texts(words));
+      assert.equal(run === null ? null : run.start, start);
+    });
+  }
+});
+
+describe("locateSubcommandStart policy guard", () => {
+  it("missing/invalid positionPolicy throws TypeError naming the 3 policies", () => {
+    const suffix = refOf("git push").node.suffix;
+    for (const bad of [undefined, "anywhere", "", 42, null]) {
+      assert.throws(
+        () =>
+          locateSubcommandStart(suffix, {
+            positionPolicy: bad as unknown as "globals-before-only",
+          }),
+        (err: unknown) => {
+          assert.ok(err instanceof TypeError);
+          assert.ok(err.message.includes("globals-anywhere"));
+          assert.ok(err.message.includes("globals-before-only"));
+          assert.ok(err.message.includes("globals-after-only"));
+          return true;
+        },
+      );
+    }
+  });
+
+  it("get* keeps the table + anywhere fallback (no throw without opts)", () => {
+    assert.deepEqual(texts(getSubcommandWords(refOf("go -v build"))), null);
+    assert.deepEqual(texts(getSubcommandWords(refOf("mytool sub"))), ["sub"]);
   });
 });
 
