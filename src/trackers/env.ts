@@ -98,7 +98,14 @@ function resolveAssignmentWord(
  * Bash-faithful tilde expansion of an assignment RHS, applied
  * AFTER the split on the first `=` (issue #13).
  *
- * The expansion gate is two-layered:
+ * The expansion gate is three-layered:
+ *
+ *   - **Raw-text** (issue #16, checked first): bash decides tilde
+ *     expansion on the raw token before backslash removal, so the raw
+ *     RHS (from `word.text`) must itself be a bare `~` or start with
+ *     `~/`. `VAULT=~\/x` (raw `~\`) stays literal even though the
+ *     resolved value looks like `~/x` on unbash v4. The literal keeps
+ *     bash-exact quote removal (`~\/x` → `~/x`) on both v3 and v4.
  *
  *   - **Value-level** (mirrors bash's rule): expand only when the
  *     value is a bare `~` or starts with `~/`. `~$X` (tilde
@@ -135,6 +142,33 @@ function expandAssignmentValueTilde(
   value: string,
   env: EnvState,
 ): string | undefined {
+  // Raw-text tilde gate (issue #16): bash decides tilde expansion on
+  // the RAW token BEFORE backslash removal, so `VAULT=~\/x` (tilde
+  // followed by `\`, not `/`) must NOT expand — even though unbash
+  // v4 correctly strips the backslash in `Word.value` (upstream fix
+  // webpro-nl/unbash@5f8bbee48), making the resolved `~/x` LOOK
+  // expandable. The raw RHS (from `word.text` up to the first `=`,
+  // which the bare-assignment synthesis preserves verbatim as `p.text`
+  // and export words carry as their raw token) must itself be a bare
+  // `~` or start with `~/`; otherwise keep the resolved value literal.
+  // Bash still performs quote removal on the literal (`~\/x` → `~/x`,
+  // verified: `HOME=/home/me bash -c 'VAULT=~\/x; …'` → `<~/x>`) —
+  // v4 already strips it, v3 preserves it (upstream bug), so drop that
+  // single escape here for the `~\` shape so BOTH yield bash-exact
+  // `~/x`. Fail-closed: when the raw text is unavailable, fall through
+  // to the pre-existing gates below (unchanged behavior).
+  const rawToken = word.text;
+  if (rawToken !== undefined) {
+    const eq = rawToken.indexOf("=");
+    const rawRhs = eq === -1 ? rawToken : rawToken.slice(eq + 1);
+    if (!(rawRhs === "~" || rawRhs.startsWith("~/"))) {
+      if (rawRhs.startsWith("~\\") && value.startsWith("~\\")) {
+        return `~${value.slice(2)}`;
+      }
+      return value;
+    }
+  }
+
   if (!(value === "~" || value.startsWith("~/"))) return value;
 
   const parts = word.parts ?? [];
