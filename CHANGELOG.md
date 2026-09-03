@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 - *(env)* Tilde expansion in assignment RHS (VAR=~/x) (closes #13)
+- *(env)* Raw-text tilde gate for unbash v4 (closes #16)
 
 
 ## [0.1.0] — 2026-08-10
