@@ -39,7 +39,6 @@ import type {
   WordPart,
 } from "unbash";
 import { extractAllCommandsFromAST } from "./extract.ts";
-import { wordValue } from "./internal/word-value.ts";
 import type { CommandRef } from "./types.ts";
 
 /**
@@ -607,7 +606,7 @@ function synthesizeAssignmentWords(
 
 /** Return the command's basename (e.g. `/usr/bin/git` → `git`), or "". */
 function commandBasename(node: Command): string {
-  const name = wordValue(node.name);
+  const name = node.name?.value;
   if (!name) return "";
   // Avoid requiring `node:path` here — path.basename handles separators
   // based on the platform, but command basenames are POSIX-shaped. Cheap

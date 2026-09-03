@@ -53,7 +53,6 @@
  */
 
 import type { Word } from "unbash";
-import { wordValue } from "./internal/word-value.ts";
 import { getBasename } from "./resolve.ts";
 import type { CommandRef } from "./types.ts";
 
@@ -231,7 +230,7 @@ function scanSubcommandIndices(
   let i = 0;
   while (i < words.length && indices.length < depth) {
     // Quote-aware resolution ALWAYS — .text alone misreads quoted tokens.
-    const v = wordValue(words[i]) ?? "";
+    const v = words[i]?.value ?? "";
     if (v.startsWith("-")) {
       if (
         opts.positionPolicy === "globals-after-only" &&

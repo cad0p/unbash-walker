@@ -58,7 +58,6 @@
 import * as path from "node:path";
 import type { Word } from "unbash";
 import { seedProcessEnv } from "../internal/seed-process-env.ts";
-import { wordValue } from "../internal/word-value.ts";
 import { resolveWord } from "../resolve-word.ts";
 // Internal primitive (deliberately NOT re-exported from index root): the
 // git modifier consumes only its boundary index, not the public API.
@@ -296,11 +295,11 @@ function applyGitCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < boundary) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
@@ -332,11 +331,11 @@ function applyMakeCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < args.length) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
@@ -365,14 +364,14 @@ function applyEnvCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < args.length) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     // End of options: `--`, `NAME=value`, or the cmd name.
     if (tok === "--") return cwd;
     if (!tok.startsWith("-")) return cwd;
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
