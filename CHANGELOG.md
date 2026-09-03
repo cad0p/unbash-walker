@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - ResolveWordText — text-mode word resolution with process-substitution inner expansion (closes #5)
 - GetSubcommandWords + bundleContains — argv-structured subcommand extraction (closes #8)
 - Expose subcommand boundary metadata via SubcommandRun (closes #12)
+- Export expandTildeIfLeading from the barrel (closes #20)
 
 ### 🐛 Bug Fixes
 
