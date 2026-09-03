@@ -54,7 +54,7 @@ const labelTracker: Tracker<string> = {
       apply: (args, _current) => {
         const w = args[0];
         if (!w || !isStaticallyResolvable(w)) return undefined;
-        return w.value ?? w.text;
+        return w.value;
       },
     },
     tag: {
@@ -62,7 +62,7 @@ const labelTracker: Tracker<string> = {
       apply: (args, _current) => {
         const w = args[0];
         if (!w || !isStaticallyResolvable(w)) return undefined;
-        return w.value ?? w.text;
+        return w.value;
       },
     },
   },
@@ -82,7 +82,7 @@ const globalFlagTracker: Tracker<string> = {
       apply: (args, _current) => {
         const w = args[0];
         if (!w || !isStaticallyResolvable(w)) return undefined;
-        return w.value ?? w.text;
+        return w.value;
       },
     },
   },
@@ -307,9 +307,9 @@ describe("walk — generic Tracker semantics", () => {
           git: {
             scope: "sequential",
             apply: (args, current) => {
-              const subcmd = args[0]?.value ?? args[0]?.text;
+              const subcmd = args[0]?.value;
               if (subcmd !== "checkout") return current;
-              const target = args[1]?.value ?? args[1]?.text;
+              const target = args[1]?.value;
               return target ?? current;
             },
           },
@@ -330,9 +330,7 @@ describe("walk — generic Tracker semantics", () => {
       // Pick out the three `git` commands by arg inspection
       const byArgs = (first: string): readonly CommandRef[] =>
         refs.filter(
-          (r) =>
-            getBasename(r) === "git" &&
-            (r.node.suffix[0]?.value ?? r.node.suffix[0]?.text) === first,
+          (r) => getBasename(r) === "git" && r.node.suffix[0]?.value === first,
         );
 
       const checkoutRef = byArgs("checkout")[0]!;
@@ -412,7 +410,7 @@ describe("walk — generic Tracker semantics", () => {
         modifiers: {
           mark: {
             scope: "sequential",
-            apply: (args) => args[0]?.value ?? args[0]?.text ?? undefined,
+            apply: (args) => args[0]?.value,
           },
         },
       };

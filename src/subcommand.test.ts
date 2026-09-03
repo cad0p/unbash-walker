@@ -37,7 +37,7 @@ function refOf(raw: string): CommandRef {
 
 /** Quote-aware projection of a word run — what callers compare against. */
 function texts(words: readonly Word[] | null): string[] | null {
-  return words === null ? null : words.map((w) => w.value ?? w.text);
+  return words === null ? null : words.map((w) => w.value);
 }
 
 /** Suffix word at `i` of the first command in `raw`. */
@@ -392,7 +392,7 @@ describe("locateSubcommandStart", () => {
 
 /** Quote-aware projection of a subcommand run's words. */
 function runTexts(run: { words: readonly Word[] } | null): string[] | null {
-  return run === null ? null : run.words.map((w) => w.value ?? w.text);
+  return run === null ? null : run.words.map((w) => w.value);
 }
 
 describe("locateSubcommandRun", () => {

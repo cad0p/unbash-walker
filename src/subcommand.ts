@@ -33,7 +33,7 @@
  * ## Design notes
  *
  *   - Linear scan over the suffix words — no regex anywhere. Each word is
- *     classified via quote-aware resolution (`value ?? text`, never bare
+ *     classified via quote-aware resolution (`.value`, never bare
  *     `.text`): any `-`-prefixed token is flag-shaped and skipped, any other
  *     token starts the subcommand run. `$VAR` values are not expanded; the
  *     scan is structural only.
@@ -208,8 +208,8 @@ export interface SubcommandRun {
  * "s3" and "ls" at indices 0 and 3), so the run is generally NOT a contiguous
  * range of the suffix array.
  *
- * The scan classifies each suffix word via quote-aware resolution (`value ??
- * text`, never bare `.text`): any `-`-prefixed token is flag-shaped (skipped),
+ * The scan classifies each suffix word via quote-aware resolution (`.value`,
+ * never bare `.text`): any `-`-prefixed token is flag-shaped (skipped),
  * any other token joins the run. `$VAR` values are NOT expanded; the scan is
  * structural only. Declared consuming flags jump their value BY INDEX (`i +=
  * 2`), never evaluating the following word's content — a flag value must never
@@ -230,7 +230,7 @@ function scanSubcommandIndices(
   let i = 0;
   while (i < words.length && indices.length < depth) {
     // Quote-aware resolution ALWAYS — .text alone misreads quoted tokens.
-    const v = words[i]?.value ?? words[i]?.text ?? "";
+    const v = words[i]?.value ?? "";
     if (v.startsWith("-")) {
       if (
         opts.positionPolicy === "globals-after-only" &&
@@ -425,12 +425,12 @@ export function getSubcommandRun(
  * the body at the first `=` (`-f=x` → letters `f`; anything post-`=` is a
  * value, never scanned).
  *
- * Quote-aware via `value ?? text`. Returns false for long options (`--force`
+ * Quote-aware via `.value`. Returns false for long options (`--force`
  * starts with `--`), empty/non-single-char letters, and non-dash words.
  */
 export function bundleContains(word: Word, letter: string): boolean {
   if (letter.length !== 1) return false;
-  const v = word.value ?? word.text;
+  const v = word.value;
   // Must be single-dash short-option shape: `-abc`, not `--long`, not bare.
   if (!v.startsWith("-") || v.startsWith("--")) return false;
   const body = v.slice(1);

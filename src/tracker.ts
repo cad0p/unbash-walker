@@ -588,8 +588,8 @@ function synthesizeAssignmentWords(
         : [
             {
               type: "Literal",
-              value: p.value.value ?? p.value.text ?? "",
-              text: p.value.text ?? p.value.value ?? "",
+              value: p.value.value,
+              text: p.value.text,
             },
           ]
       : [];
@@ -606,7 +606,7 @@ function synthesizeAssignmentWords(
 
 /** Return the command's basename (e.g. `/usr/bin/git` → `git`), or "". */
 function commandBasename(node: Command): string {
-  const name = node.name?.value ?? node.name?.text;
+  const name = node.name?.value;
   if (!name) return "";
   // Avoid requiring `node:path` here — path.basename handles separators
   // based on the platform, but command basenames are POSIX-shaped. Cheap

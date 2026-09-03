@@ -183,8 +183,9 @@ function expandAssignmentValueTilde(
   // not part of the tilde prefix and don't block expansion.
   //
   // Structural, not positional: scan the parts in order, summing
-  // their UNQUOTED lengths (part.value ?? 0 — quoted parts have no
-  // resolved value) until we've covered the first `/` in the
+  // their UNQUOTED lengths (part.value — every part reaching this
+  // point is a narrowed bare Literal) until we've covered the first
+  // `/` in the
   // resolved value. Every part contributing to that prefix must be
   // a bare Literal.
   if (parts.length >= 2) {
@@ -214,7 +215,7 @@ function expandAssignmentValueTilde(
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i]!;
       if (p.type !== "Literal") break; // quoted name/leader ends it
-      const v = p.value ?? "";
+      const v = p.value;
       const t = v.indexOf("~");
       if (t !== -1) {
         tildeIdx = i;
@@ -234,7 +235,7 @@ function expandAssignmentValueTilde(
     for (let i = tildeIdx; i < parts.length; i++) {
       const p = parts[i]!;
       if (p.type !== "Literal") break;
-      const v = p.value ?? "";
+      const v = p.value;
       runLen += i === tildeIdx ? v.length - tildeOffset : v.length;
     }
     // Strictly past the slash: `runLen > slash` (not `>=`) — a run
@@ -378,8 +379,7 @@ const exportModifier: Modifier<EnvState> = {
   apply: (args, current) => {
     let next = current;
     for (const w of args) {
-      const raw = w.value ?? w.text;
-      if (raw === undefined) continue;
+      const raw = w.value;
       // Skip flags — bash's `export` accepts `-n`, `-p`, `-f`, `--`.
       // `-n NAME` takes the following arg but since we don't model
       // the exported-bit attribute, skipping the flag and NOT
@@ -429,13 +429,12 @@ const unsetModifier: Modifier<EnvState> = {
     // untouched. This fixes a prior bug where `unset -f FOO` would
     // delete the scalar FOO alongside a phantom function clear.
     for (const w of args) {
-      const raw = w.value ?? w.text;
+      const raw = w.value;
       if (raw === "-f") return current;
     }
     const names: string[] = [];
     for (const w of args) {
-      const raw = w.value ?? w.text;
-      if (raw === undefined) continue;
+      const raw = w.value;
       if (raw === "--") continue;
       // `-v`, `-x`: skip the flag, keep scanning. No consume-next.
       // `-f` handled above; we never reach this loop when it's present.

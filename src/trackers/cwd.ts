@@ -240,10 +240,6 @@ const cdModifier: Modifier<string, { env: EnvState }> = {
 // wrapped as a `per-command` Modifier instead of a side-table entry), but
 // the behavior is identical to keep every pre-existing test passing.
 
-function wordValue(w: Word | undefined): string | undefined {
-  return w?.value ?? w?.text;
-}
-
 /** Apply a single directory change: absolute replaces, relative joins. */
 function applyDir(current: string, target: string): string {
   if (path.isAbsolute(target)) return target;
@@ -299,11 +295,11 @@ function applyGitCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < boundary) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
@@ -335,11 +331,11 @@ function applyMakeCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < args.length) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
@@ -368,14 +364,14 @@ function applyEnvCwd(args: readonly Word[], current: string): string {
   let cwd = current;
   let i = 0;
   while (i < args.length) {
-    const tok = wordValue(args[i]) ?? "";
+    const tok = args[i]?.value ?? "";
     // End of options: `--`, `NAME=value`, or the cmd name.
     if (tok === "--") return cwd;
     if (!tok.startsWith("-")) return cwd;
     if (tok === "-C") {
       const target = args[i + 1];
       if (!hasStaticTarget(target)) return cwd;
-      const val = wordValue(target);
+      const val = target?.value;
       if (val === undefined) return cwd;
       cwd = applyDir(cwd, val);
       i += 2;
