@@ -259,9 +259,14 @@ describe("envTracker via walk", () => {
       assert.equal(env.get("VAULT"), "~user/x");
     });
 
-    it("`VAULT=~\\/x; cmd` — literal ~\\/x (escaped slash; gate excludes `~\\`)", () => {
+    it("`VAULT=~\\/x; cmd` — literal ~/x (escaped slash; no tilde expansion, backslash stripped)", () => {
+      // Bash truth (issue #16): HOME=/home/me bash -c 'VAULT=~\/x; printf "<%s>\\n" "$VAULT"' → <~/x>.
+      // Bash decides tilde expansion on the RAW token (`~` followed by `\`, not `/` → no expansion),
+      // then strips the backslash via quote removal. The raw-text gate in expandAssignmentValueTilde
+      // keeps this literal on both unbash v3 (which preserves the backslash in Word.value — normalized
+      // to ~/x here) and v4 (which already strips it).
       const env = finalEnv("VAULT=~\\/x; cmd", new Map([["HOME", "/home/me"]]));
-      assert.equal(env.get("VAULT"), "~\\/x");
+      assert.equal(env.get("VAULT"), "~/x");
     });
 
     it("dynamic value `FOO=$(pwd)` — skipped; FOO not set", () => {
