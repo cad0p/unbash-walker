@@ -44,8 +44,10 @@ export {
   bundleContains,
   DEFAULT_POSITION_POLICIES,
   getSubcommandWords,
+  locateSubcommandRun,
   type PositionPolicy,
   type SubcommandOptions,
+  type SubcommandRun,
 } from "./subcommand.ts";
 export {
   isStaticallyResolvable,

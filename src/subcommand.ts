@@ -24,11 +24,16 @@
  *   - `locateSubcommandStart(words, opts)` — the boundary index: index of
  *     the first subcommand word in `words`, or null when no positional
  *     exists. Exported for trackers/cwd.ts; NOT re-exported from index root.
- *   - `getSubcommandRun(ref, opts)` / `locateSubcommandRun(words, opts)` —
- *     the same run as boundary metadata (`{indices, words, start}`), for
- *     consumers needing positional information (e.g. args-after-subcommand
- *     reasoning without identity-matching words). Also NOT re-exported
- *     from the index root.
+ *   - `locateSubcommandRun(words, opts)` — the same run as boundary
+ *     metadata (`{indices, words, start}`), for consumers needing
+ *     positional information (e.g. args-after-subcommand reasoning
+ *     without identity-matching words). Root-exported as an `@advanced`
+ *     sharp edge: the run is generally NON-CONTIGUOUS, so never rebuild
+ *     it or args-after via a contiguous slice, and there is deliberately
+ *     NO `end` / tail primitive (see {@link SubcommandRun}).
+ *   - `getSubcommandRun(ref, opts)` — the thin `CommandRef` twin of
+ *     `locateSubcommandRun` (basename table lookup included). Tracker-
+ *     side convenience; NOT re-exported from the index root.
  *
  * ## Design notes
  *
@@ -165,6 +170,9 @@ function assertPositionPolicy(
  * Boundary metadata for a subcommand run: the same run
  * {@link getSubcommandWords} returns, plus WHERE its words sit in the
  * passed array.
+ *
+ * @advanced Sharp edge, root-exported for argv-structured consumers.
+ * Read the hull prohibitions below before composing a tail.
  *
  * The run is generally NON-CONTIGUOUS in the passed array: consumed flag
  * values sit BETWEEN subcommand words (`aws s3 --profile x ls`, `--profile`
@@ -323,6 +331,10 @@ export function getSubcommandWords(
  * Boundary metadata for the subcommand run over bare words: positions plus
  * words plus the `start` alias (`start === indices[0]`, agreeing with
  * {@link locateSubcommandStart} on the same input).
+ *
+ * @advanced Sharp edge: the run is generally NON-CONTIGUOUS — never
+ * rebuild it or args-after via a contiguous slice, and do not infer a
+ * tail from `start` + run length (see {@link SubcommandRun}).
  *
  * Bare-words core — NO table lookup. `positionPolicy` is REQUIRED (bare
  * words carry no binary identity, so there is no key to resolve a default
