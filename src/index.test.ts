@@ -7,7 +7,13 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { expandTildeIfLeading } from "./index.ts";
+import { parse as parseBash } from "unbash";
+import { extractAllCommandsFromAST } from "./extract.ts";
+import {
+  expandTildeIfLeading,
+  locateSubcommandRun,
+  type SubcommandRun,
+} from "./index.ts";
 
 describe("expandTildeIfLeading (package root, issue #20)", () => {
   const HOME = new Map([["HOME", "/home/me"]]);
@@ -34,5 +40,28 @@ describe("expandTildeIfLeading (package root, issue #20)", () => {
     assert.equal(expandTildeIfLeading("plain", HOME), "plain");
     assert.equal(expandTildeIfLeading("/a/~", HOME), "/a/~");
     assert.equal(expandTildeIfLeading("", HOME), "");
+  });
+});
+
+describe("locateSubcommandRun (package root)", () => {
+  it("non-contiguous pin: aws s3 --profile x ls → indices=[0,3], start=0", () => {
+    const refs = extractAllCommandsFromAST(
+      parseBash("aws s3 --profile x ls"),
+      "aws s3 --profile x ls",
+    );
+    const suffix = refs[0]?.node.suffix;
+    if (!suffix) throw new Error("no command extracted");
+    const run: SubcommandRun | null = locateSubcommandRun(suffix, {
+      positionPolicy: "globals-anywhere",
+      depth: 2,
+      valueConsumingFlags: ["--profile"],
+    });
+    assert.deepEqual(run?.indices, [0, 3]);
+    assert.deepEqual(
+      run?.words.map((w) => w.value),
+      ["s3", "ls"],
+    );
+    assert.equal(run?.start, 0);
+    assert.equal("end" in (run as unknown as Record<string, unknown>), false);
   });
 });
