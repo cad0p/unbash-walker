@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
 
 - Trust upstream Word.value, drop dead ?? text fallbacks (closes #10)
 
+### 📚 Documentation
+
+- AGENTS.md — pinned base text (drop Goldmine variant) ([#25](https://github.com/cad0p/unbash-walker/pull/25))
+
 ### ⚙️ Miscellaneous Tasks
 
 - Upgrade unbash ^3.0.0 → ^4.0.11 (closes #11)
